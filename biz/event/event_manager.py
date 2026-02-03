@@ -44,17 +44,23 @@ def on_push_reviewed(entity: PushReviewEntity):
     im_msg = f"### 🚀 {entity.project_name}: Push\n\n"
     im_msg += "#### 提交记录:\n"
 
-    for commit in entity.commits:
-        message = commit.get('message', '').strip()
-        author = commit.get('author', 'Unknown Author')
-        timestamp = commit.get('timestamp', '')
-        url = commit.get('url', '#')
+    # 只显示最新的一条提交记录
+    if entity.commits:
+        latest_commit = entity.commits[0]
+        message = latest_commit.get('message', '').strip()
+        author = latest_commit.get('author', 'Unknown Author')
+        timestamp = latest_commit.get('timestamp', '')
+        url = latest_commit.get('url', '#')
         im_msg += (
             f"- **提交信息**: {message}\n"
             f"- **提交者**: {author}\n"
             f"- **时间**: {timestamp}\n"
             f"- [查看提交详情]({url})\n\n"
         )
+
+        # 如果有多条提交记录，显示"和其它N条提交记录"
+        if len(entity.commits) > 1:
+            im_msg += f"- 和其它 {len(entity.commits) - 1} 条提交记录\n\n"
 
     if entity.review_result:
         im_msg += f"#### AI Review 结果: \n {entity.review_result}\n\n"
