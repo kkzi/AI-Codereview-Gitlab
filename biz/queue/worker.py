@@ -10,9 +10,42 @@ from biz.platforms.gitea.webhook_handler import filter_changes as filter_gitea_c
     PushHandler as GiteaPushHandler
 from biz.service.review_service import ReviewService
 from biz.utils.code_reviewer import CodeReviewer
+from biz.llm.factory import LLMRetryExhaustedError
 from biz.utils.im import notifier
 from biz.utils.log import logger
 
+
+def get_model_name():
+    """获取当前使用的AI模型名称，从.env中的xxx_API_MODEL字段读取"""
+    provider = os.environ.get('LLM_PROVIDER', 'unknown')
+    
+    # 映射provider到对应的环境变量名
+    api_model_env_map = {
+        'anthropic': 'ANTHROPIC_API_MODEL',
+        'zhipuai': 'ZHIPUAI_API_MODEL',
+        'openai': 'OPENAI_API_MODEL',
+        'deepseek': 'DEEPSEEK_API_MODEL',
+        'ollama': 'OLLAMA_API_MODEL',
+        'qwen': 'QWEN_API_MODEL'
+    }
+    
+    # 获取对应的环境变量名，并读取模型名称
+    env_var_name = api_model_env_map.get(provider)
+    if env_var_name:
+        model_name = os.environ.get(env_var_name)
+        if model_name:
+            return model_name
+    
+    # 如果找不到具体模型名，返回provider的友好名称
+    provider_friendly_names = {
+        'anthropic': 'Claude',
+        'zhipuai': '智谱AI',
+        'openai': 'GPT',
+        'deepseek': 'DeepSeek',
+        'ollama': 'Ollama',
+        'qwen': '通义千问'
+    }
+    return provider_friendly_names.get(provider, provider.upper())
 
 
 def handle_push_event(webhook_data: dict, gitlab_token: str, gitlab_url: str, gitlab_url_slug: str):
@@ -40,13 +73,33 @@ def handle_push_event(webhook_data: dict, gitlab_token: str, gitlab_url: str, gi
 
             if len(changes) > 0:
                 commits_text = ';'.join(commit.get('message', '').strip() for commit in commits)
-                review_result = CodeReviewer().review_and_strip_code(str(changes), commits_text)
-                score = CodeReviewer.parse_review_score(review_text=review_result)
-                for item in changes:
-                    additions += item['additions']
-                    deletions += item['deletions']
-            # 将review结果提交到Gitlab的 notes
-            handler.add_push_notes(f'Auto Review Result: \n{review_result}')
+                try:
+                    review_result = CodeReviewer(changes=changes).review_and_strip_code(str(changes), commits_text, changes=changes)
+                    score = CodeReviewer.parse_review_score(review_text=review_result)
+                    for item in changes:
+                        additions += item['additions']
+                        deletions += item['deletions']
+                    # 提交审查结果到 GitLab
+                    handler.add_push_notes(f'代码审查结果（{get_model_name()}）\n{review_result}')
+                except LLMRetryExhaustedError as e:
+                    logger.error(f"❌ AI 审查失败，跳过提交评论。Commit: {commits[-1].get('id', 'unknown') if commits else 'unknown'}, 错误: {e}")
+                    review_result = f"AI 审查失败（{get_model_name()}）：{str(e)[:100]}"
+                    score = 0
+                    # 发送失败事件，status='failed'
+                    event_manager['push_reviewed'].send(PushReviewEntity(
+                        project_name=webhook_data['project']['name'],
+                        author=webhook_data['user_username'],
+                        branch=webhook_data.get('ref', '').replace('refs/heads/', ''),
+                        updated_at=int(datetime.now().timestamp()),
+                        commits=commits,
+                        score=score,
+                        review_result=review_result,
+                        url_slug=gitlab_url_slug,
+                        webhook_data=webhook_data,
+                        additions=additions,
+                        deletions=deletions,
+                    ), status='failed')
+                    return
 
         event_manager['push_reviewed'].send(PushReviewEntity(
             project_name=webhook_data['project']['name'],
@@ -60,7 +113,7 @@ def handle_push_event(webhook_data: dict, gitlab_token: str, gitlab_url: str, gi
             webhook_data=webhook_data,
             additions=additions,
             deletions=deletions,
-        ))
+        ), status='success')
 
     except Exception as e:
         error_message = f'服务出现未知错误: {str(e)}\n{traceback.format_exc()}'
@@ -135,12 +188,35 @@ def handle_merge_request_event(webhook_data: dict, gitlab_token: str, gitlab_url
 
         # review 代码
         commits_text = ';'.join(commit['title'] for commit in commits)
-        review_result = CodeReviewer().review_and_strip_code(str(changes), commits_text)
+        try:
+            review_result = CodeReviewer(changes=changes).review_and_strip_code(str(changes), commits_text, changes=changes)
 
-        # 将review结果提交到Gitlab的 notes
-        handler.add_merge_request_notes(f'Auto Review Result: \n{review_result}')
+            # 将review结果提交到Gitlab的 notes
+            handler.add_merge_request_notes(f'代码审查结果（{get_model_name()}）\n{review_result}')
+        except LLMRetryExhaustedError as e:
+            logger.error(f"❌ AI 审查失败，跳过提交评论。MR: {handler.merge_request_iid}, 错误: {e}")
+            review_result = f"AI 审查失败（{get_model_name()}）：{str(e)[:100]}"
+            score = 0
+            event_manager['merge_request_reviewed'].send(
+                MergeRequestReviewEntity(
+                    project_name=webhook_data['project']['name'],
+                    author=webhook_data['user']['username'],
+                    source_branch=webhook_data['object_attributes']['source_branch'],
+                    target_branch=webhook_data['object_attributes']['target_branch'],
+                    updated_at=int(datetime.now().timestamp()),
+                    commits=commits,
+                    score=score,
+                    url=webhook_data['object_attributes']['url'],
+                    review_result=review_result,
+                    url_slug=gitlab_url_slug,
+                    webhook_data=webhook_data,
+                    additions=additions,
+                    deletions=deletions,
+                    last_commit_id=last_commit_id,
+                ), status='failed'
+            )
+            return
 
-        # dispatch merge_request_reviewed event
         event_manager['merge_request_reviewed'].send(
             MergeRequestReviewEntity(
                 project_name=webhook_data['project']['name'],
@@ -157,7 +233,7 @@ def handle_merge_request_event(webhook_data: dict, gitlab_token: str, gitlab_url
                 additions=additions,
                 deletions=deletions,
                 last_commit_id=last_commit_id,
-            )
+            ), status='success'
         )
 
     except Exception as e:
@@ -190,19 +266,37 @@ def handle_github_push_event(webhook_data: dict, github_token: str, github_url: 
 
             if len(changes) > 0:
                 commits_text = ';'.join(commit.get('message', '').strip() for commit in commits)
-                review_result = CodeReviewer().review_and_strip_code(str(changes), commits_text)
-                score = CodeReviewer.parse_review_score(review_text=review_result)
-                for item in changes:
-                    additions += item.get('additions', 0)
-                    deletions += item.get('deletions', 0)
-            # 将review结果提交到GitHub的 notes
-            handler.add_push_notes(f'Auto Review Result: \n{review_result}')
+                try:
+                    review_result = CodeReviewer(changes=changes).review_and_strip_code(str(changes), commits_text, changes=changes)
+                    score = CodeReviewer.parse_review_score(review_text=review_result)
+                    for item in changes:
+                        additions += item.get('additions', 0)
+                        deletions += item.get('deletions', 0)
+                    handler.add_push_notes(f'代码审查结果（{get_model_name()}）\n{review_result}')
+                except LLMRetryExhaustedError as e:
+                    logger.error(f"❌ AI 审查失败，跳过提交评论。Commit: {commits[-1].get('id', 'unknown') if commits else 'unknown'}, 错误: {e}")
+                    review_result = f"AI 审查失败（{get_model_name()}）：{str(e)[:100]}"
+                    score = 0
+                    event_manager['push_reviewed'].send(PushReviewEntity(
+                        project_name=webhook_data['repository']['name'],
+                        author=webhook_data['sender']['login'],
+                        branch=webhook_data['ref'].replace('refs/heads/', ''),
+                        updated_at=int(datetime.now().timestamp()),
+                        commits=commits,
+                        score=score,
+                        review_result=review_result,
+                        url_slug=github_url_slug,
+                        webhook_data=webhook_data,
+                        additions=additions,
+                        deletions=deletions,
+                    ), status='failed')
+                    return
 
         event_manager['push_reviewed'].send(PushReviewEntity(
             project_name=webhook_data['repository']['name'],
             author=webhook_data['sender']['login'],
             branch=webhook_data['ref'].replace('refs/heads/', ''),
-            updated_at=int(datetime.now().timestamp()),  # 当前时间
+            updated_at=int(datetime.now().timestamp()),
             commits=commits,
             score=score,
             review_result=review_result,
@@ -210,7 +304,7 @@ def handle_github_push_event(webhook_data: dict, github_token: str, github_url: 
             webhook_data=webhook_data,
             additions=additions,
             deletions=deletions,
-        ))
+        ), status='success')
 
     except Exception as e:
         error_message = f'服务出现未知错误: {str(e)}\n{traceback.format_exc()}'
@@ -275,12 +369,33 @@ def handle_github_pull_request_event(webhook_data: dict, github_token: str, gith
 
         # review 代码
         commits_text = ';'.join(commit['title'] for commit in commits)
-        review_result = CodeReviewer().review_and_strip_code(str(changes), commits_text)
+        try:
+            review_result = CodeReviewer(changes=changes).review_and_strip_code(str(changes), commits_text, changes=changes)
+            handler.add_pull_request_notes(f'代码审查结果（{get_model_name()}）\n{review_result}')
+        except LLMRetryExhaustedError as e:
+            logger.error(f"❌ AI 审查失败，跳过提交评论。PR: {handler.pull_request_number}, 错误: {e}")
+            review_result = f"AI 审查失败（{get_model_name()}）：{str(e)[:100]}"
+            score = 0
+            event_manager['merge_request_reviewed'].send(
+                MergeRequestReviewEntity(
+                    project_name=webhook_data['repository']['name'],
+                    author=webhook_data['pull_request']['user']['login'],
+                    source_branch=webhook_data['pull_request']['head']['ref'],
+                    target_branch=webhook_data['pull_request']['base']['ref'],
+                    updated_at=int(datetime.now().timestamp()),
+                    commits=commits,
+                    score=score,
+                    url=webhook_data['pull_request']['html_url'],
+                    review_result=review_result,
+                    url_slug=github_url_slug,
+                    webhook_data=webhook_data,
+                    additions=additions,
+                    deletions=deletions,
+                    last_commit_id=github_last_commit_id,
+                ), status='failed'
+            )
+            return
 
-        # 将review结果提交到GitHub的 notes
-        handler.add_pull_request_notes(f'Auto Review Result: \n{review_result}')
-
-        # dispatch pull_request_reviewed event
         event_manager['merge_request_reviewed'].send(
             MergeRequestReviewEntity(
                 project_name=webhook_data['repository']['name'],
@@ -297,7 +412,8 @@ def handle_github_pull_request_event(webhook_data: dict, github_token: str, gith
                 additions=additions,
                 deletions=deletions,
                 last_commit_id=github_last_commit_id,
-            ))
+            ), status='success'
+        )
 
     except Exception as e:
         error_message = f'服务出现未知错误: {str(e)}\n{traceback.format_exc()}'
@@ -329,12 +445,33 @@ def handle_gitea_push_event(webhook_data: dict, gitea_token: str, gitea_url: str
 
             if len(changes) > 0:
                 commits_text = ';'.join(commit.get('message', '').strip() for commit in commits)
-                review_result = CodeReviewer().review_and_strip_code(str(changes), commits_text)
-                score = CodeReviewer.parse_review_score(review_text=review_result)
-                for item in changes:
-                    additions += item.get('additions', 0)
-                    deletions += item.get('deletions', 0)
-            handler.add_push_notes(f'Auto Review Result: \n{review_result}')
+                try:
+                    review_result = CodeReviewer(changes=changes).review_and_strip_code(str(changes), commits_text, changes=changes)
+                    score = CodeReviewer.parse_review_score(review_text=review_result)
+                    for item in changes:
+                        additions += item.get('additions', 0)
+                        deletions += item.get('deletions', 0)
+                    handler.add_push_notes(f'代码审查结果（{get_model_name()}）\n{review_result}')
+                except LLMRetryExhaustedError as e:
+                    logger.error(f"❌ AI 审查失败，跳过提交评论。Commit: {commits[-1].get('id', 'unknown') if commits else 'unknown'}, 错误: {e}")
+                    review_result = f"AI 审查失败（{get_model_name()}）：{str(e)[:100]}"
+                    score = 0
+                    repository = webhook_data.get('repository', {})
+                    sender = webhook_data.get('sender', {}) or webhook_data.get('pusher', {}) or {}
+                    event_manager['push_reviewed'].send(PushReviewEntity(
+                        project_name=repository.get('name'),
+                        author=sender.get('login') or sender.get('username'),
+                        branch=handler.branch_name,
+                        updated_at=int(datetime.now().timestamp()),
+                        commits=commits,
+                        score=score,
+                        review_result=review_result,
+                        url_slug=gitea_url_slug,
+                        webhook_data=webhook_data,
+                        additions=additions,
+                        deletions=deletions,
+                    ), status='failed')
+                    return
 
         repository = webhook_data.get('repository', {})
         sender = webhook_data.get('sender', {}) or webhook_data.get('pusher', {}) or {}
@@ -351,7 +488,7 @@ def handle_gitea_push_event(webhook_data: dict, gitea_token: str, gitea_url: str
             webhook_data=webhook_data,
             additions=additions,
             deletions=deletions,
-        ))
+        ), status='success')
 
     except Exception as e:
         error_message = f'服务出现未知错误: {str(e)}\n{traceback.format_exc()}'
@@ -407,9 +544,34 @@ def handle_gitea_pull_request_event(webhook_data: dict, gitea_token: str, gitea_
             return
 
         commits_text = ';'.join(commit.get('title', '') for commit in commits)
-        review_result = CodeReviewer().review_and_strip_code(str(changes), commits_text)
-
-        handler.add_pull_request_notes(f'Auto Review Result: \n{review_result}')
+        try:
+            review_result = CodeReviewer(changes=changes).review_and_strip_code(str(changes), commits_text, changes=changes)
+            handler.add_pull_request_notes(f'代码审查结果（{get_model_name()}）\n{review_result}')
+        except LLMRetryExhaustedError as e:
+            logger.error(f"❌ AI 审查失败，跳过提交评论。PR: {handler.pull_request_index}, 错误: {e}")
+            review_result = f"AI 审查失败（{get_model_name()}）：{str(e)[:100]}"
+            score = 0
+            repository = webhook_data.get('repository', {})
+            author_info = pull_request.get('user', {}) or webhook_data.get('sender', {}) or {}
+            event_manager['merge_request_reviewed'].send(
+                MergeRequestReviewEntity(
+                    project_name=repository.get('name'),
+                    author=author_info.get('login') or author_info.get('username'),
+                    source_branch=head_info.get('ref') or pull_request.get('head_branch', ''),
+                    target_branch=base_info.get('ref') or pull_request.get('base_branch', ''),
+                    updated_at=int(datetime.now().timestamp()),
+                    commits=commits,
+                    score=score,
+                    url=pull_request.get('html_url') or pull_request.get('url'),
+                    review_result=review_result,
+                    url_slug=gitea_url_slug,
+                    webhook_data=webhook_data,
+                    additions=additions,
+                    deletions=deletions,
+                    last_commit_id=last_commit_id,
+                ), status='failed'
+            )
+            return
 
         repository = webhook_data.get('repository', {})
         author_info = pull_request.get('user', {}) or webhook_data.get('sender', {}) or {}
@@ -430,7 +592,8 @@ def handle_gitea_pull_request_event(webhook_data: dict, gitea_token: str, gitea_
                 additions=additions,
                 deletions=deletions,
                 last_commit_id=last_commit_id,
-            ))
+            ), status='success'
+        )
 
     except Exception as e:
         error_message = f'AI Code Review 服务出现未知错误: {str(e)}\n{traceback.format_exc()}'

@@ -11,10 +11,10 @@ event_manager = {
 }
 
 
-# 定义事件处理函数
-def on_merge_request_reviewed(mr_review_entity: MergeRequestReviewEntity):
-    # 发送IM消息通知
-    im_msg = f"""
+def on_merge_request_reviewed(mr_review_entity: MergeRequestReviewEntity, status: str = "success"):
+    # 发送IM消息通知（仅成功时发送）
+    if status == "success":
+        im_msg = f"""
 ### 🔀 {mr_review_entity.project_name}: Merge Request
 
 #### 合并请求信息:
@@ -31,45 +31,46 @@ def on_merge_request_reviewed(mr_review_entity: MergeRequestReviewEntity):
 
 {mr_review_entity.review_result}
     """
-    notifier.send_notification(content=im_msg, msg_type='markdown', title='Merge Request Review',
-                               project_name=mr_review_entity.project_name, url_slug=mr_review_entity.url_slug,
-                               webhook_data=mr_review_entity.webhook_data)
+        notifier.send_notification(content=im_msg, msg_type='markdown', title='Merge Request Review',
+                                   project_name=mr_review_entity.project_name, url_slug=mr_review_entity.url_slug,
+                                   webhook_data=mr_review_entity.webhook_data)
 
     # 记录到数据库
-    ReviewService().insert_mr_review_log(mr_review_entity)
+    ReviewService().insert_mr_review_log(mr_review_entity, status=status)
 
 
-def on_push_reviewed(entity: PushReviewEntity):
-    # 发送IM消息通知
-    im_msg = f"### 🚀 {entity.project_name}: Push\n\n"
-    im_msg += "#### 提交记录:\n"
+def on_push_reviewed(entity: PushReviewEntity, status: str = "success"):
+    # 发送IM消息通知（仅成功时发送）
+    if status == "success":
+        im_msg = f"### 🚀 {entity.project_name}: Push\n\n"
+        im_msg += "#### 提交记录:\n"
 
-    # 只显示最新的一条提交记录
-    if entity.commits:
-        latest_commit = entity.commits[0]
-        message = latest_commit.get('message', '').strip()
-        author = latest_commit.get('author', 'Unknown Author')
-        timestamp = latest_commit.get('timestamp', '')
-        url = latest_commit.get('url', '#')
-        im_msg += (
-            f"- **提交信息**: {message}\n"
-            f"- **提交者**: {author}\n"
-            f"- **时间**: {timestamp}\n"
-            f"- [查看提交详情]({url})\n\n"
-        )
+        # 只显示最新的一条提交记录
+        if entity.commits:
+            latest_commit = entity.commits[0]
+            message = latest_commit.get('message', '').strip()
+            author = latest_commit.get('author', 'Unknown Author')
+            timestamp = latest_commit.get('timestamp', '')
+            url = latest_commit.get('url', '#')
+            im_msg += (
+                f"- **提交信息**: {message}\n"
+                f"- **提交者**: {author}\n"
+                f"- **时间**: {timestamp}\n"
+                f"- [查看提交详情]({url})\n\n"
+            )
 
-        # 如果有多条提交记录，显示"和其它N条提交记录"
-        if len(entity.commits) > 1:
-            im_msg += f"- 和其它 {len(entity.commits) - 1} 条提交记录\n\n"
+            # 如果有多条提交记录，显示"和其它N条提交记录"
+            if len(entity.commits) > 1:
+                im_msg += f"- 和其它 {len(entity.commits) - 1} 条提交记录\n\n"
 
-    if entity.review_result:
-        im_msg += f"#### AI Review 结果: \n {entity.review_result}\n\n"
-    notifier.send_notification(content=im_msg, msg_type='markdown',title=f"{entity.project_name} Push Event",
-                               project_name=entity.project_name, url_slug=entity.url_slug,
-                               webhook_data=entity.webhook_data)
+        if entity.review_result:
+            im_msg += f"#### AI Review 结果: \n {entity.review_result}\n\n"
+        notifier.send_notification(content=im_msg, msg_type='markdown',title=f"{entity.project_name} Push Event",
+                                   project_name=entity.project_name, url_slug=entity.url_slug,
+                                   webhook_data=entity.webhook_data)
 
     # 记录到数据库
-    ReviewService().insert_push_review_log(entity)
+    ReviewService().insert_push_review_log(entity, status=status)
 
 
 # 连接事件处理函数到事件信号

@@ -11,6 +11,11 @@ from biz.llm.client.zhipuai import ZhipuAIClient
 from biz.utils.log import logger
 
 
+class LLMRetryExhaustedError(Exception):
+    """LLM 重试次数用尽异常"""
+    pass
+
+
 class RetryClientWrapper(BaseClient):
     """客户端包装器，为 completions 方法添加重试逻辑"""
 
@@ -39,10 +44,10 @@ class RetryClientWrapper(BaseClient):
                     logger.info(f"等待 {wait_time} 秒后重试...")
                     time.sleep(wait_time)
 
-        # 所有重试都失败
+        # 所有重试都失败，抛出异常而不是返回错误字符串
         error_msg = f"AI 模型调用失败，已重试 {retry_count} 次: {last_error}"
         logger.error(error_msg)
-        return f"AI 服务暂时不可用，已重试 {retry_count} 次: {str(last_error)}"
+        raise LLMRetryExhaustedError(error_msg)
 
 
 class Factory:

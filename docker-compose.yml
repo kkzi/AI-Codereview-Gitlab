@@ -3,8 +3,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-      target: app
-    image: ghcr.io/sunmh207/ai-codereview-gitlab:1.4.1
+    image: ai-codereview-gitlab:2.0.0
+    container_name: ai-codereview-app
     ports:
       - "5001:5001"
       - "5002:5002"

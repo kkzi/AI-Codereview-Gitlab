@@ -1,3 +1,62 @@
-.venv
-data
+# Git
+.git
+.gitignore
+.gitattributes
+
+# IDE
+.idea
+.vscode
+*.swp
+*.swo
+*~
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info
+dist
+build
+.pytest_cache
+.coverage
+htmlcov
+
+# Docker
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# Logs and data
 log
+data
+*.log
+
+# Config
+conf/.env
+conf/*.pem
+conf/*.key
+
+# Testing
+.venv
+env
+venv
+.env
+
+# Documentation
+README.md
+LICENSE
+docs
+*.md
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Cache
+.cache
+*.bak
+*~

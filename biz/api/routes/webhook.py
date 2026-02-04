@@ -158,3 +158,103 @@ def handle_gitea_webhook(event_type, data):
         error_message = f'Only pull_request and push events are supported for Gitea webhook, but received: {event_type}.'
         logger.error(error_message)
         return jsonify(error_message), 400
+
+
+@webhook_bp.route('/review/retry', methods=['POST'])
+def retry_review():
+    """
+    重新触发代码审查
+    请求体: {"record_id": int, "review_type": "mr" | "push"}
+    """
+    from biz.service.review_service import ReviewService
+    from biz.queue.worker import handle_merge_request_event, handle_push_event
+    
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "Invalid JSON"}), 400
+        
+        record_id = data.get('record_id')
+        review_type = data.get('review_type')  # 'mr' 或 'push'
+        
+        if not record_id or not review_type:
+            return jsonify({"error": "Missing record_id or review_type"}), 400
+        
+        if review_type == 'mr':
+            # 获取 MR 记录
+            record = ReviewService().get_mr_review_log_by_id(record_id)
+            if not record:
+                return jsonify({"error": "Record not found"}), 404
+            
+            logger.info(f'Retrying MR review for record_id={record_id}, project={record["project_name"]}')
+            
+            # 重新构造 webhook_data（简化版，只需要关键字段）
+            webhook_data = {
+                'object_kind': 'merge_request',
+                'project': {
+                    'name': record['project_name'],
+                    'id': 0  # 简化处理，不需要真实项目ID
+                },
+                'user': {
+                    'username': record['author']
+                },
+                'object_attributes': {
+                    'iid': 0,
+                    'source_branch': record['source_branch'],
+                    'target_branch': record['target_branch'],
+                    'url': record['url'],
+                    'last_commit': {
+                        'id': record.get('last_commit_id', '')
+                    }
+                },
+                'repository': {
+                    'homepage': record['url'].rsplit('/', 2)[0] if record['url'] else ''
+                }
+            }
+            
+            gitlab_token = os.getenv('GITLAB_ACCESS_TOKEN', '')
+            gitlab_url = os.getenv('GITLAB_URL', 'https://gitlab.com')
+            from biz.platforms.gitlab.webhook_handler import slugify_url
+            gitlab_url_slug = slugify_url(gitlab_url)
+            
+            # 异步重新审查
+            handle_queue(handle_merge_request_event, webhook_data, gitlab_token, gitlab_url, gitlab_url_slug)
+            
+        elif review_type == 'push':
+            # 获取 Push 记录
+            record = ReviewService().get_push_review_log_by_id(record_id)
+            if not record:
+                return jsonify({"error": "Record not found"}), 404
+            
+            logger.info(f'Retrying Push review for record_id={record_id}, project={record["project_name"]}')
+            
+            # 重新构造 webhook_data（简化版）
+            webhook_data = {
+                'ref': f'refs/heads/{record["branch"]}',
+                'before': '0000000',
+                'after': record.get('last_commit_id', ''),
+                'project': {
+                    'name': record['project_name']
+                },
+                'user_username': record['author'],
+                'repository': {
+                    'homepage': ''
+                }
+            }
+            
+            gitlab_token = os.getenv('GITLAB_ACCESS_TOKEN', '')
+            gitlab_url = os.getenv('GITLAB_URL', 'https://gitlab.com')
+            from biz.platforms.gitlab.webhook_handler import slugify_url
+            gitlab_url_slug = slugify_url(gitlab_url)
+            
+            # 异步重新审查
+            handle_queue(handle_push_event, webhook_data, gitlab_token, gitlab_url, gitlab_url_slug)
+        
+        else:
+            return jsonify({"error": "Invalid review_type, must be 'mr' or 'push'"}), 400
+        
+        return jsonify({"message": f"Retry review triggered for record_id={record_id}"}), 200
+        
+    except Exception as e:
+        logger.error(f"Error retrying review: {e}")
+        return jsonify({"error": str(e)}), 500

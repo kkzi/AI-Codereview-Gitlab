@@ -1,31 +1,39 @@
-# 使用官方的 Python 基础镜像
-FROM python:3.10-slim
+# ========== 构建阶段 ==========
+FROM python:3.10-slim-bookworm AS builder
 
-# 设置工作目录
+WORKDIR /build
+
+RUN sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debian.sources && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends gcc g++ && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+RUN pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/ && \
+    pip install --no-cache-dir --prefix=/install -r requirements.txt && \
+    rm -rf /root/.cache/pip
+
+# ========== 运行阶段 ==========
+FROM python:3.10-slim-bookworm
+
 WORKDIR /app
 
-# 替换为阿里云 debian 源
-RUN sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debian.sources
+RUN sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debian.sources && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
+        libglib2.0-0 libsm6 libxrender1 libxext6 \
+        supervisor \
+    && rm -rf /var/lib/apt/lists/*
 
-# 安装 supervisord 作为进程管理工具
-RUN apt-get update && apt-get install -y --no-install-recommends supervisor && rm -rf /var/lib/apt/lists/*
+COPY --from=builder /install /usr/local
 
-# 复制项目文件&创建必要的文件夹
-COPY requirements.txt .
-
-# 安装依赖
-RUN pip install --no-cache-dir -r requirements.txt
+COPY conf/*.yml ./conf/
+COPY conf/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
+COPY api.py ui.py ./
+COPY biz ./biz
 
 RUN mkdir -p log data conf
-COPY biz ./biz
-COPY fonts ./fonts
-COPY api.py ./api.py
-COPY ui.py ./ui.py
-COPY conf/prompt_templates.yml ./conf/prompt_templates.yml
-COPY conf/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 
-# 暴露 Flask 和 Streamlit 的端口
 EXPOSE 5001 5002
 
-# 使用 supervisord 作为启动命令
 CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]

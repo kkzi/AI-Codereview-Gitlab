@@ -14,36 +14,42 @@ import hmac
 import base64
 import time
 import pandas as pd
-from dotenv import load_dotenv
-import matplotlib.pyplot as plt
-import matplotlib as mpl
-import matplotlib.font_manager as fm
-import streamlit as st
+try:
+    from dotenv import load_dotenv
+    load_dotenv("conf/.env")
+except ImportError:
+    print("Warning: python-dotenv not found, using default environment variables")
+    # Set default values if dotenv is not available
+    import os
+    if not os.getenv("DASHBOARD_USER"):
+        os.environ["DASHBOARD_USER"] = "admin"
+    if not os.getenv("DASHBOARD_PASSWORD"):
+        os.environ["DASHBOARD_PASSWORD"] = "admin"
 
 from biz.service.review_service import ReviewService
-from matplotlib.ticker import MaxNLocator
-from streamlit_cookies_manager import CookieManager
 
-load_dotenv("conf/.env")
+try:
+    from streamlit_cookies_manager import CookieManager
+except ImportError:
+    print("Warning: streamlit-cookies-manager not found, using simple cookie management")
+    # Simple cookie manager fallback
+    class SimpleCookieManager:
+        def __init__(self):
+            pass
+        def ready(self):
+            return True
+        def get(self, key):
+            return None
+        def __contains__(self, key):
+            return False
+        def __setitem__(self, key, value):
+            pass
+        def __delitem__(self, key):
+            pass
+        def save(self):
+            pass
 
-
-def set_global_font():
-    """设置全局字体，如果字体文件不存在则忽略并使用默认字体"""
-    font_path = "fonts/SourceHanSansCN-Regular.otf"
-    if Path(font_path).exists():
-        try:
-            fm.fontManager.addfont(font_path)
-            mpl.rcParams["font.family"] = "Source Han Sans CN"
-        except Exception as e:
-            st.warning(f"字体加载失败，使用默认字体。错误信息：{e}")
-    else:
-        st.warning(f"字体文件未找到：{font_path}，将使用默认字体。")
-
-    mpl.rcParams["axes.unicode_minus"] = False  # 解决负号显示问题
-
-
-# 在项目启动时调用
-set_global_font()
+    CookieManager = SimpleCookieManager
 
 # 从环境变量中读取用户名和密码
 DASHBOARD_USER = os.getenv("DASHBOARD_USER", "admin")
@@ -160,6 +166,21 @@ def authenticate(username, password, remember_password=False):
     return False
 
 
+def format_delta(row):
+    if not math.isnan(row['additions']) and not math.isnan(row['deletions']):
+        return f"+{int(row['additions'])}\n-{int(row['deletions'])}"
+    else:
+        return ""
+
+
+def format_status(status):
+    if status == "success":
+        return "√"
+    elif status == "failed":
+        return "×"
+    return status
+
+
 # 获取数据函数
 def get_data(service_func, authors=None, project_names=None, updated_at_gte=None, updated_at_lte=None, columns=None):
     df = service_func(authors=authors, project_names=project_names, updated_at_gte=updated_at_gte,
@@ -174,18 +195,35 @@ def get_data(service_func, authors=None, project_names=None, updated_at_gte=None
             if isinstance(ts, (int, float)) else ts
         )
 
-    def format_delta(row):
-        if not math.isnan(row['additions']) and not math.isnan(row['deletions']):
-            return f"+{int(row['additions'])}  -{int(row['deletions'])}"
-        else:
-            return ""
-
     if "additions" in df.columns and "deletions" in df.columns:
         df["delta"] = df.apply(format_delta, axis=1)
     else:
         df["delta"] = ""
 
-    data = df[columns]
+    if "project_url" in df.columns and "project_name" in df.columns:
+        df["项目名称"] = df.apply(
+            lambda row: f'<a href="{row["project_url"]}" target="_blank">{row["project_name"]}</a>'
+            if pd.notna(row["project_url"]) and row["project_url"] else row["project_name"],
+            axis=1
+        )
+
+    if "commit_url" in df.columns and "commit_messages" in df.columns:
+        df["提交信息"] = df.apply(
+            lambda row: f'<a href="{row["commit_url"]}" target="_blank" title="{row["commit_messages"]}">{row["commit_messages"][:40]}{"..." if len(row["commit_messages"]) > 40 else ""}</a>'
+            if pd.notna(row["commit_url"]) and row["commit_url"] else row["commit_messages"],
+            axis=1
+        )
+
+    data = df[columns] if columns else df
+    if not columns:
+        required_columns = [
+            "id", "project_name", "project_url", "author", "branch", 
+            "updated_at", "commit_messages", "commit_url", "score", 
+            "additions", "deletions", "status"
+        ]
+        for col in required_columns:
+            if col in df.columns:
+                data[col] = df[col]
     return data
 
 
@@ -218,9 +256,8 @@ st.markdown(
     .stButton>button:hover {
         background-color: #45a049;
         box-shadow: 0 2px 5px rgba(0,0,0,0.2);
-        color: #ffffff;  /* 设置悬停时的文字颜色为白色 */
+        color: #ffffff;
     }
-
     .stTextInput>div>div>input {
         border: 1px solid #ccc;
         border-radius: 4px;
@@ -253,7 +290,161 @@ st.markdown(
         margin-bottom: 0.5rem;
         text-align: center;
     }
+    .dataframe-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 14px;
+    }
+    .dataframe-table th {
+        background-color: #4CAF50;
+        color: white;
+        padding: 10px;
+        text-align: left;
+    }
+    .dataframe-table td {
+        padding: 8px;
+        border-bottom: 1px solid #ddd;
+    }
+    .dataframe-table tr:hover {
+        background-color: #f5f5f5;
+    }
+    .dataframe-table a {
+        color: #1e88e5;
+        text-decoration: none;
+    }
+    .dataframe-table a:hover {
+        text-decoration: underline;
+    }
+    .dataframe-table th:nth-child(1) { width: 200px; } /* 项目名称 */
+    .dataframe-table th:nth-child(2) { width: 100px; } /* 分支 */
+    .dataframe-table th:nth-child(3) { width: auto; } /* 提交信息 - 自动调整 */
+    .dataframe-table th:nth-child(4) { width: 80px; } /* 提交人 */
+    .dataframe-table th:nth-child(5) { width: 100px; } /* 提交时间 */
+    .dataframe-table th:nth-child(6) { width: 80px; white-space: pre-line; } /* 变更 - 80 +/- 换行显示 */
+    .dataframe-table th:nth-child(7) { width: 60px; } /* 状态 - 使用 √ 符号 */
+    .dataframe-table th:nth-child(8) { width: 60px; } /* 得分 */
+    .dataframe-table td:nth-child(6) { white-space: pre-line; } /* 变更列换行显示 */
+    .table-container {
+        max-height: 70vh !important;
+        overflow-y: auto !important;
+        overflow-x: auto !important;
+        display: block !important;
+    }
+    .table-container table {
+        display: block !important;
+    }
+    .sortable {
+        cursor: pointer;
+        user-select: none;
+    }
+    .sortable:hover {
+        background-color: #45a049;
+    }
+    .sort-asc::after {
+        content: " ▲";
+    }
+    .sort-desc::after {
+        content: " ▼";
+    }
     </style>
+    <script>
+    function sortTable(n) {
+        var table = document.querySelector(".dataframe-table");
+        if (!table) return;
+        
+        // 获取数据行（排除表头）
+        var tbody = table.tBodies[0] || table;
+        var dataRows = Array.from(tbody.rows);
+        var ascending = table.getAttribute("data-sort-col") != n || table.getAttribute("data-sort-dir") != "asc";
+
+        dataRows.sort(function(row1, row2) {
+            var cell1 = row1.cells[n];
+            var cell2 = row2.cells[n];
+            if (!cell1 || !cell2) return 0;
+            var val1 = cell1.textContent || cell1.innerText;
+            var val2 = cell2.textContent || cell2.innerText;
+
+            // 处理状态列的特殊情况（√ 和 ×）
+            if (n === 6) { // 状态列索引
+                var statusOrder = {'√': 1, '×': 2, 'success': 1, 'failed': 2};
+                var status1 = statusOrder[val1.trim()] || 999;
+                var status2 = statusOrder[val2.trim()] || 999;
+                return ascending ? status1 - status2 : status2 - status1;
+            }
+
+            // 处理数值列（得分列）
+            if (n === 7) { // 得分列索引
+                var num1 = parseFloat(val1.replace(/[^0-9.-]/g, ""));
+                var num2 = parseFloat(val2.replace(/[^0-9.-]/g, ""));
+                if (!isNaN(num1) && !isNaN(num2)) {
+                    return ascending ? num1 - num2 : num2 - num1;
+                }
+            }
+
+            // 处理日期时间列
+            if (n === 4) { // 提交时间列索引
+                var date1 = new Date(val1);
+                var date2 = new Date(val2);
+                if (!isNaN(date1.getTime()) && !isNaN(date2.getTime())) {
+                    return ascending ? date1 - date2 : date2 - date1;
+                }
+            }
+
+            // 默认文本排序
+            return ascending ? val1.localeCompare(val2) : val2.localeCompare(val1);
+        });
+
+        // 清空表格体并重新添加排序后的数据行
+        tbody.innerHTML = '';
+        dataRows.forEach(function(row) {
+            tbody.appendChild(row);
+        });
+
+        table.setAttribute("data-sort-col", n);
+        table.setAttribute("data-sort-dir", ascending ? "asc" : "desc");
+
+        var headers = table.querySelectorAll("th");
+        headers.forEach(function(th, i) {
+            th.classList.remove("sort-asc", "sort-desc");
+            if (i === n) {
+                th.classList.add(ascending ? "sort-asc" : "sort-desc");
+            }
+        });
+    }
+
+    function initSortable() {
+        var headers = document.querySelectorAll(".dataframe-table th");
+        headers.forEach(function(th, i) {
+            th.classList.add("sortable");
+            th.onclick = function() { sortTable(i); };
+        });
+    }
+
+    // 使用 MutationObserver 监听表格动态加载
+    var observer = new MutationObserver(function(mutations) {
+        mutations.forEach(function(mutation) {
+            mutation.addedNodes.forEach(function(node) {
+                if (node.querySelector && node.querySelector(".dataframe-table")) {
+                    setTimeout(initSortable, 100); // 延迟初始化确保DOM完全加载
+                } else if (node.classList && node.classList.contains("dataframe-table")) {
+                    setTimeout(initSortable, 100);
+                } else if (node.innerHTML && node.innerHTML.includes('dataframe-table')) {
+                    setTimeout(initSortable, 100);
+                }
+            });
+        });
+    });
+
+    observer.observe(document.body, { childList: true, subtree: true });
+
+    // 页面加载后也尝试初始化一次
+    window.addEventListener('load', function() {
+        setTimeout(initSortable, 500);
+    });
+
+    // 定期检查新表格（备用方案）
+    setInterval(initSortable, 2000);
+    </script>
     """,
     unsafe_allow_html=True
 )
@@ -297,140 +488,6 @@ def login_page():
         st.markdown('</div>', unsafe_allow_html=True)
 
 
-# 生成项目提交数量图表
-def generate_project_count_chart(df):
-    if df.empty:
-        st.info("没有数据可供展示")
-        return
-
-    # 计算每个项目的提交数量
-    project_counts = df['project_name'].value_counts().reset_index()
-    project_counts.columns = ['project_name', 'count']
-
-    # 生成颜色列表，每个项目一个颜色
-    colors = plt.colormaps['tab20'].resampled(len(project_counts))
-
-    # 显示提交数量柱状图
-    fig1, ax1 = plt.subplots(figsize=(10, 6))
-    ax1.bar(
-        project_counts['project_name'],
-        project_counts['count'],
-        color=[colors(i) for i in range(len(project_counts))]
-    )
-    ax1.yaxis.set_major_locator(MaxNLocator(integer=True))
-    plt.xticks(rotation=45, ha='right', fontsize=26)
-    plt.tight_layout()
-    st.pyplot(fig1)
-
-
-# 生成项目平均分数图表
-def generate_project_score_chart(df):
-    if df.empty:
-        st.info("没有数据可供展示")
-        return
-
-    # 计算每个项目的平均分数
-    project_scores = df.groupby('project_name')['score'].mean().reset_index()
-    project_scores.columns = ['project_name', 'average_score']
-
-    # 生成颜色列表，每个项目一个颜色
-    # colors = plt.cm.get_cmap('Accent', len(project_scores))  # 使用'tab20'颜色映射，适合分类数据
-    colors = plt.colormaps['Accent'].resampled(len(project_scores))
-    # 显示平均分数柱状图
-    fig2, ax2 = plt.subplots(figsize=(10, 6))
-    ax2.bar(
-        project_scores['project_name'],
-        project_scores['average_score'],
-        color=[colors(i) for i in range(len(project_scores))]
-    )
-    ax2.yaxis.set_major_locator(MaxNLocator(integer=True))
-    plt.xticks(rotation=45, ha='right', fontsize=26)
-    plt.tight_layout()
-    st.pyplot(fig2)
-
-
-# 生成人员提交数量图表
-def generate_author_count_chart(df):
-    if df.empty:
-        st.info("没有数据可供展示")
-        return
-
-    # 计算每个人员的提交数量
-    author_counts = df['author'].value_counts().reset_index()
-    author_counts.columns = ['author', 'count']
-
-    # 生成颜色列表，每个项目一个颜色
-    colors = plt.colormaps['Paired'].resampled(len(author_counts))
-    # 显示提交数量柱状图
-    fig1, ax1 = plt.subplots(figsize=(10, 6))
-    ax1.bar(
-        author_counts['author'],
-        author_counts['count'],
-        color=[colors(i) for i in range(len(author_counts))]
-    )
-    ax1.yaxis.set_major_locator(MaxNLocator(integer=True))
-    plt.xticks(rotation=45, ha='right', fontsize=26)
-    plt.tight_layout()
-    st.pyplot(fig1)
-    plt.close(fig1)
-
-
-# 生成人员平均分数图表
-def generate_author_score_chart(df):
-    if df.empty:
-        st.info("没有数据可供展示")
-        return
-
-    # 计算每个人员的平均分数
-    author_scores = df.groupby('author')['score'].mean().reset_index()
-    author_scores.columns = ['author', 'average_score']
-
-    # 显示平均分数柱状图
-    fig2, ax2 = plt.subplots(figsize=(10, 6))
-    # 生成颜色列表，每个项目一个颜色
-    colors = plt.colormaps['Pastel1'].resampled(len(author_scores))
-    ax2.bar(
-        author_scores['author'],
-        author_scores['average_score'],
-        color=[colors(i) for i in range(len(author_scores))]
-    )
-    ax2.yaxis.set_major_locator(MaxNLocator(integer=True))
-    plt.xticks(rotation=45, ha='right', fontsize=26)
-    plt.tight_layout()
-    st.pyplot(fig2)
-
-
-def generate_author_code_line_chart(df):
-    if df.empty:
-        st.info("没有数据可供展示")
-        return
-        # 检查必要的列是否存在
-
-    if 'additions' not in df.columns or 'deletions' not in df.columns:
-        st.warning("无法生成代码行数图表：缺少必要的数据列")
-        return
-        # 计算每个人员的代码行数
-    author_code_lines_add = df.groupby('author')['additions'].sum().reset_index()
-    author_code_lines_add.columns = ['author', 'additions']
-    author_code_lines_del = df.groupby('author')['deletions'].sum().reset_index()
-    author_code_lines_del.columns = ['author', 'deletions']
-    # 显示代码行数柱状图
-    fig3, ax3 = plt.subplots(figsize=(10, 6))
-    ax3.bar(
-        author_code_lines_add['author'],
-        author_code_lines_add['additions'],
-        color=(0.7, 1, 0.7)
-    )
-    ax3.bar(
-        author_code_lines_del['author'],
-        -author_code_lines_del['deletions'],
-        color=(1, 0.7, 0.7)
-    )
-    plt.xticks(rotation=45, ha='right', fontsize=26)
-    plt.tight_layout()
-    st.pyplot(fig3)
-
-
 # 退出登录函数
 def logout():
     # 清除session状态
@@ -451,7 +508,7 @@ def main_page():
     # 将标题和退出按钮放在同一行
     col_title, col_space, col_logout = st.columns([7, 2, 1.2])
     with col_title:
-        st.markdown("#### 📊 代码审查统计")
+        st.markdown("#### 📊 代码审查记录")
     with col_logout:
         if st.button("退出登录", key="logout_button", use_container_width=True):
             logout()
@@ -459,11 +516,332 @@ def main_page():
     current_date = datetime.date.today()
     start_date_default = current_date - datetime.timedelta(days=7)
 
+    def display_push_data(tab, service_func):
+        with tab:
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                start_date = st.date_input("开始日期", start_date_default, key=f"{tab}_start_date")
+            with col2:
+                end_date = st.date_input("结束日期", current_date, key=f"{tab}_end_date")
+
+            start_datetime = datetime.datetime.combine(start_date, datetime.time.min)
+            end_datetime = datetime.datetime.combine(end_date, datetime.time.max)
+
+            data = get_data(service_func, updated_at_gte=int(start_datetime.timestamp()),
+                            updated_at_lte=int(end_datetime.timestamp()))
+            df = pd.DataFrame(data)
+
+            unique_authors = sorted(df["author"].dropna().unique().tolist()) if not df.empty else []
+            unique_projects = sorted(df["project_name"].dropna().unique().tolist()) if not df.empty else []
+            with col3:
+                authors = st.multiselect("开发者", unique_authors, default=[], key=f"{tab}_authors")
+            with col4:
+                project_names = st.multiselect("项目名称", unique_projects, default=[], key=f"{tab}_projects")
+
+            data = get_data(service_func, authors=authors, project_names=project_names,
+                            updated_at_gte=int(start_datetime.timestamp()),
+                            updated_at_lte=int(end_datetime.timestamp()))
+            df = pd.DataFrame(data)
+
+            if not df.empty:
+                # 预处理数据
+                df_display = df.copy()
+                
+                # 创建 delta 列
+                if "additions" in df_display.columns and "deletions" in df_display.columns:
+                    df_display["delta"] = df_display.apply(format_delta, axis=1)
+                
+                # 格式化状态
+                if "status" in df_display.columns:
+                    df_display["status"] = df_display["status"].apply(format_status)
+                
+                df_display = df_display.reset_index(drop=True)
+
+                # 检查并修复空的项目名称
+                if "project_name" in df_display.columns:
+                    # 如果 project_name 为空但 project_url 不为空，尝试从 URL 提取项目名
+                    def fix_project_name(row):
+                        if pd.isna(row["project_name"]) or str(row["project_name"]).strip() == "":
+                            if pd.notna(row["project_url"]) and str(row["project_url"]).strip():
+                                # 从 URL 提取项目名（最后一个 / 后的部分）
+                                url = str(row["project_url"]).rstrip('/')
+                                if '/' in url:
+                                    return url.split('/')[-1]
+                        return row["project_name"]
+
+                    df_display["project_name"] = df_display.apply(fix_project_name, axis=1)
+
+                    # 确保所有项目名称都有值
+                    df_display["project_name"] = df_display["project_name"].fillna("Unknown Project")
+
+                # 处理项目名称和分支的显示逻辑
+                has_project_url = "project_url" in df_display.columns and not df_display["project_url"].isna().all()
+
+                if not has_project_url:
+                    # 旧数据：没有 project_url，直接显示项目名称和分支名称
+                    push_column_config = {
+                        "project_name": st.column_config.TextColumn("项目名称", max_chars=100),
+                        "branch": st.column_config.TextColumn("分支"),
+                        "author": st.column_config.TextColumn("提交人"),
+                        "updated_at": st.column_config.TextColumn("提交时间"),
+                        "delta": st.column_config.TextColumn("变更"),
+                        "status": st.column_config.TextColumn(
+                            "状态",
+                            help="√=成功, ×=失败"
+                        ),
+                        "score": st.column_config.NumberColumn(
+                            "得分",
+                            format="%.1f"
+                        ),
+                    }
+                    # 旧数据显示列 - 不增加额外列
+                    display_columns = ["project_name", "branch", "author", "updated_at", "delta", "status", "score"]
+                else:
+                    # 新数据：有 project_url，创建分支链接
+                    if "branch" in df_display.columns:
+                        def create_branch_url(row):
+                            if pd.notna(row["project_url"]) and pd.notna(row["branch"]):
+                                project_url = row["project_url"].rstrip('/')
+                                branch = row["branch"]
+                                
+                                # 根据不同的代码托管平台构建分支URL
+                                if "gitlab" in project_url.lower():
+                                    return f"{project_url}/-/tree/{branch}"
+                                elif "github.com" in project_url.lower():
+                                    return f"{project_url}/tree/{branch}"
+                                elif "bitbucket.org" in project_url.lower():
+                                    return f"{project_url}/src/{branch}"
+                                else:
+                                    # 默认尝试 GitLab 格式（也适用于其他类 GitLab 平台）
+                                    return f"{project_url}/-/tree/{branch}"
+                            return ""
+                        
+                        df_display["branch_url"] = df_display.apply(create_branch_url, axis=1)
+                    else:
+                        df_display["branch_url"] = ""
+
+                    # commit_url 已经在 get_data 函数中处理，直接使用
+
+                    push_column_config = {
+                        "project_name": st.column_config.TextColumn("项目名称", max_chars=100),
+                        "project_url": None,  # 隐藏原始URL列
+                        "branch": None,  # 隐藏原始分支列
+                        "branch_url": st.column_config.LinkColumn(
+                            "分支",
+                            max_chars=100,
+                            validate=r"^https?://.+",
+                            display_text=r"https?://.*/(?:tree|src/branch|src)/([^/]+)(?:/.*)?$"  # 从URL提取分支名
+                        ) if not df_display["branch_url"].eq("").any() else st.column_config.TextColumn("分支"),
+                        "author": st.column_config.TextColumn("提交人"),
+                        "updated_at": st.column_config.TextColumn("提交时间"),
+                        "delta": st.column_config.TextColumn("变更"),
+                        "status": st.column_config.TextColumn(
+                            "状态",
+                            help="√=成功, ×=失败"
+                        ),
+                        "score": st.column_config.NumberColumn(
+                            "得分",
+                            format="%.1f"
+                        ),
+                    }
+                    # 新数据显示列
+                    display_columns = ["project_name", "project_url", "branch", "branch_url", "commit_messages", "commit_url", "author", "updated_at", "delta", "status", "score"]
+                
+                # 使用AgGrid实现高级表格功能
+                from st_aggrid import AgGrid, GridOptionsBuilder, JsCode
+
+                # 创建通用单元格渲染器类（支持项目名称、分支、提交信息）
+                custom_cell_renderer = JsCode("""
+                class LinkCellRenderer {
+                    init(params) {
+                        this.eGui = document.createElement('div');
+                        var column = params.column ? params.column.getColId() : '';
+                        var urlField = '';
+                        
+                        // 根据列名确定使用哪个 URL 字段
+                        if (column === 'project_name') {
+                            urlField = 'project_url';
+                        } else if (column === 'branch') {
+                            urlField = 'branch_url';
+                        } else if (column === 'commit_messages') {
+                            urlField = 'commit_url';
+                        }
+                        
+                        var url = urlField && params.data[urlField] ? params.data[urlField].trim() : '';
+                        
+                        if (url && url !== '') {
+                            // 创建链接
+                            var link = document.createElement('a');
+                            link.href = url;
+                            link.target = '_blank';
+                            link.style.color = '#1e88e5';
+                            link.style.textDecoration = 'none';
+                            // 分支列显示纯文本（不显示URL）
+                            if (column === 'branch') {
+                                var match = url.match(/.*\/tree\/([^/]+)(?:\/.*)?$/);
+                                link.textContent = params.value || (match ? match[1] : url);
+                            } else {
+                                link.textContent = params.value || url;
+                            }
+                            this.eGui.appendChild(link);
+                        } else {
+                            // 创建纯文本
+                            this.eGui.textContent = params.value || '';
+                        }
+                    }
+
+                    getGui() {
+                        return this.eGui;
+                    }
+
+                    destroy() {
+                        // 清理操作
+                    }
+                }
+                """)
+
+                # 配置所有列，确保正确的顺序
+                ordered_columns = ["project_name", "project_url", "branch", "branch_url", "commit_messages", "commit_url", "author", "updated_at", "delta", "status", "score"]
+
+                # 过滤出实际存在的列
+                available_columns = [col for col in ordered_columns if col in df_display.columns]
+
+                # 重新排序DataFrame以匹配所需的列顺序
+                df_display = df_display[available_columns]
+
+                # 配置AgGrid
+                gb = GridOptionsBuilder.from_dataframe(df_display)
+
+                # 配置项目名称列 - 支持链接和文本混排
+                gb.configure_column(
+                    "project_name",
+                    headerName="项目名称",
+                    cellRenderer=custom_cell_renderer,
+                    sortable=True,
+                    filter=True,
+                    width=150,
+                    maxWidth=150,
+                    minWidth=150
+                )
+
+                # 配置隐藏的 URL 字段，供渲染器使用但不显示
+                hidden_url_columns = ["project_url", "branch_url", "commit_url"]
+                for col in hidden_url_columns:
+                    if col in available_columns:
+                        gb.configure_column(
+                            col,
+                            hide=True
+                        )
+
+                # 按顺序配置每列
+                for col in available_columns:
+                    if col in ["project_name", "project_url", "branch_url", "commit_url"]:
+                        # 已配置，跳过
+                        continue
+                    elif col == "branch":
+                        gb.configure_column(
+                            col,
+                            headerName="分支",
+                            cellRenderer=custom_cell_renderer,
+                            sortable=True,
+                            filter=True,
+                            width=120,
+                            maxWidth=120,
+                            minWidth=120
+                        )
+                    elif col == "commit_messages":
+                        gb.configure_column(
+                            col,
+                            headerName="提交信息",
+                            cellRenderer=custom_cell_renderer,
+                            sortable=True,
+                            filter=True,
+                            minWidth=200,
+                            flex=1  # 根据剩余宽度动态调整
+                        )
+                    elif col == "delta":
+                        gb.configure_column(
+                            col,
+                            headerName="变更",
+                            sortable=True,
+                            filter=True,
+                            width=80,
+                            maxWidth=80,
+                            minWidth=80
+                        )
+                    elif col == "author":
+                        gb.configure_column(
+                            col,
+                            headerName="提交人",
+                            sortable=True,
+                            filter=True,
+                            width=80,
+                            maxWidth=80,
+                            minWidth=80
+                        )
+                    elif col == "updated_at":
+                        gb.configure_column(
+                            col,
+                            headerName="提交时间",
+                            sortable=True,
+                            filter=True,
+                            width=160,
+                            maxWidth=160,
+                            minWidth=160
+                        )
+                    elif col == "status":
+                        gb.configure_column(
+                            col,
+                            headerName="状态",
+                            sortable=True,
+                            filter=True,
+                            width=60,
+                            maxWidth=60,
+                            minWidth=60
+                        )
+                    elif col == "score":
+                        gb.configure_column(
+                            col,
+                            headerName="得分",
+                            sortable=True,
+                            filter=True,
+                            width=60,
+                            maxWidth=60,
+                            minWidth=60
+                        )
+
+                # 配置表格选项
+                gb.configure_grid_options(
+                    domLayout='normal',
+                    enableRangeSelection=True,
+                    pagination=True,
+                    paginationAutoPageSize=True
+                )
+
+                grid_options = gb.build()
+
+                # 显示AgGrid表格
+                AgGrid(
+                    df_display,
+                    gridOptions=grid_options,
+                    height=500,
+                    fit_columns_on_grid_load=False,  # 使用 flex 布局时关闭自动适应
+                    allow_unsafe_jscode=True,
+                    theme='streamlit'
+                )
+
+            if not df.empty:
+                total_records = len(df)
+                successful_records = len(df[df['status'] == "√"]) if 'status' in df.columns else total_records
+                failed_records = len(df[df['status'] == "×"]) if 'status' in df.columns else 0
+                average_score = df["score"].mean() if "score" in df.columns else 0
+                st.markdown(f"**总记录数:** {total_records} | **成功:** {successful_records} | **失败:** {failed_records} | **平均得分:** {average_score:.2f}")
+
     # 根据环境变量决定是否显示 push_tab
     show_push_tab = os.environ.get('PUSH_REVIEW_ENABLED', '0') == '1'
 
     if show_push_tab:
-        mr_tab, push_tab = st.tabs(["合并请求", "代码推送"])
+        push_tab, mr_tab = st.tabs(["代码推送", "合并请求"])
     else:
         mr_tab = st.container()
 
@@ -494,56 +872,44 @@ def main_page():
                             updated_at_lte=int(end_datetime.timestamp()), columns=columns)
             df = pd.DataFrame(data)
 
+            for col in ["project_url", "commit_url"]:
+                if col in df.columns:
+                    df[col] = df[col].astype(str)
+
             st.data_editor(
                 df,
                 use_container_width=True,
-                column_config=column_config
+                column_config=column_config,
+                disabled=True  # 数据只读，不允许编辑
             )
 
-            total_records = len(df)
-            average_score = df["score"].mean() if not df.empty else 0
-            st.markdown(f"**总记录数:** {total_records}，**平均得分:** {average_score:.2f}")
-
-            # 创建2x2网格布局展示四个图表
-            row1, row2, row3, row4 = st.columns(4)
-            with row1:
-                st.markdown("<div style='text-align: center; font-size: 20px;'><b>项目提交统计</b></div>",
-                            unsafe_allow_html=True)
-                generate_project_count_chart(df)
-            with row2:
-                st.markdown("<div style='text-align: center; font-size: 20px;'><b>项目平均得分</b></div>",
-                            unsafe_allow_html=True)
-                generate_project_score_chart(df)
-            with row3:
-                st.markdown("<div style='text-align: center; font-size: 20px;'><b>开发者提交统计</b></div>",
-                            unsafe_allow_html=True)
-                generate_author_count_chart(df)
-            with row4:
-                st.markdown("<div style='text-align: center; font-size: 20px;'><b>开发者平均得分</b></div>",
-                            unsafe_allow_html=True)
-                generate_author_score_chart(df)
-
-            row5, row6, row7, row8 = st.columns(4)
-            with row5:
-                st.markdown("<div style='text-align: center;'><b>人员代码变更行数</b></div>", unsafe_allow_html=True)
-                # 只有当 additions 和 deletions 列都存在时才显示代码行数图表
-                if 'additions' in df.columns and 'deletions' in df.columns:
-                    generate_author_code_line_chart(df)
-                else:
-                    st.info("无法显示代码行数图表：缺少必要的数据列")
+            # 显示统计信息
+            if not df.empty:
+                total_records = len(df)
+                successful_records = len(df[df['status'] == 'success']) if 'status' in df.columns else total_records
+                failed_records = len(df[df['status'] == 'failed']) if 'status' in df.columns else 0
+                average_score = df["score"].mean() if "score" in df.columns else 0
+                st.markdown(f"**总记录数:** {total_records} | **成功:** {successful_records} | **失败:** {failed_records} | **平均得分:** {average_score:.2f}")
 
     # Merge Request 数据展示
-    mr_columns = ["project_name", "author", "source_branch", "target_branch", "updated_at", "commit_messages", "delta",
-                  "score",
-                  "url", 'additions', 'deletions']
+    mr_columns = ["project_name", "project_url", "author", "source_branch", "target_branch", "updated_at", "commit_messages", "commit_url", "delta",
+                  "score", "url", 'additions', 'deletions', 'status', 'id']
 
     mr_column_config = {
-        "project_name": "项目名称",
+        "project_name": None,
+        "project_url": st.column_config.LinkColumn(
+            "项目名称",
+            max_chars=100,
+        ),
         "author": "开发者",
         "source_branch": "源分支",
         "target_branch": "目标分支",
         "updated_at": "更新时间",
-        "commit_messages": "提交信息",
+        "commit_messages": None,
+        "commit_url": st.column_config.LinkColumn(
+            "提交信息",
+            max_chars=100,
+        ),
         "score": st.column_config.ProgressColumn(
             "得分",
             format="%f",
@@ -553,36 +919,24 @@ def main_page():
         "url": st.column_config.LinkColumn(
             "操作",
             max_chars=100,
-            display_text="查看详情"
+            display_text="查看 MR"
         ),
         "additions": None,
         "deletions": None,
+        "status": st.column_config.TextColumn(
+            "状态",
+            help="success=成功, failed=失败",
+        ),
+        "id": None,  # 隐藏 ID 列
     }
 
     display_data(mr_tab, ReviewService().get_mr_review_logs, mr_columns, mr_column_config)
 
     # Push 数据展示
     if show_push_tab:
-        push_columns = ["project_name", "author", "branch", "updated_at", "commit_messages", "delta", "score",
-                        'additions', 'deletions']
+        display_push_data(push_tab, ReviewService().get_push_review_logs)
 
-        push_column_config = {
-            "project_name": "项目名称",
-            "author": "开发者",
-            "branch": "分支",
-            "updated_at": "更新时间",
-            "commit_messages": "提交信息",
-            "score": st.column_config.ProgressColumn(
-                "得分",
-                format="%f",
-                min_value=0,
-                max_value=100,
-            ),
-            "additions": None,
-            "deletions": None,
-        }
 
-        display_data(push_tab, ReviewService().get_push_review_logs, push_columns, push_column_config)
 
 
 # 应用入口
