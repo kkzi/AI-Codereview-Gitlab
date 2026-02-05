@@ -14,11 +14,12 @@ event_manager = {
 def on_merge_request_reviewed(mr_review_entity: MergeRequestReviewEntity, status: str = "success"):
     # 发送IM消息通知（仅成功时发送）
     if status == "success":
+        display_author = mr_review_entity.author_display_name or mr_review_entity.author
         im_msg = f"""
 ### 🔀 {mr_review_entity.project_name}: Merge Request
 
 #### 合并请求信息:
-- **提交者:** {mr_review_entity.author}
+- **提交者:** {display_author}
 
 - **源分支**: {mr_review_entity.source_branch}
 - **目标分支**: {mr_review_entity.target_branch}
@@ -46,10 +47,11 @@ def on_push_reviewed(entity: PushReviewEntity, status: str = "success"):
         im_msg += "#### 提交记录:\n"
 
         # 只显示最新的一条提交记录
+        display_author = entity.author_display_name or entity.author
         if entity.commits:
             latest_commit = entity.commits[0]
             message = latest_commit.get('message', '').strip()
-            author = latest_commit.get('author', 'Unknown Author')
+            author = latest_commit.get('author', display_author) or display_author
             timestamp = latest_commit.get('timestamp', '')
             url = latest_commit.get('url', '#')
             im_msg += (

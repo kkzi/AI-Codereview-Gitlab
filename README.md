@@ -85,7 +85,7 @@ docker-compose up -d
   - 访问 http://your-server-ip:5001
   - 显示 "The code review server is running." 说明服务启动成功。
 - Dashboard 验证：
-  - 访问 http://your-server-ip:5002
+  - 访问 http://your-server-ip:5001/dashboard
   - 看到一个审查日志页面，说明 Dashboard 启动成功。
 
 ### 方案二：本地Python环境部署
@@ -99,9 +99,18 @@ cd AI-Codereview-Gitlab
 
 **2. 安装依赖**
 
-使用 Python 环境（建议使用虚拟环境 venv）安装项目依赖(Python 版本：3.10+):
+使用 Python 环境（建议使用 `uv venv` 创建虚拟环境）安装项目依赖(Python 版本：3.10+):
 
 ```bash
+# 创建虚拟环境（推荐使用 uv）
+uv venv
+
+# 激活虚拟环境
+source .venv/bin/activate  # Linux/Mac
+# 或
+.venv\Scripts\activate     # Windows
+
+# 安装依赖
 pip install -r requirements.txt
 ```
 
@@ -111,17 +120,15 @@ pip install -r requirements.txt
 
 **4. 启动服务**
 
-- 启动API服务：
-
 ```bash
 python api.py
 ```
 
-- 启动Dashboard服务：
+服务启动后，可以访问：
+- Webhook API：`http://localhost:5001/review/webhook`
+- Dashboard：`http://localhost:5001/dashboard`（默认账号：admin/admin）
 
-```bash
-streamlit run ui.py --server.port=5002 --server.address=0.0.0.0
-```
+备注：Docker 默认仅启动 API(5001)，Dashboard 入口为 `http://localhost:5001/dashboard`。
 
 ### 配置 GitLab Webhook
 

@@ -22,18 +22,18 @@ RUN sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debia
     apt-get update && \
     apt-get install -y --no-install-recommends \
         libglib2.0-0 libsm6 libxrender1 libxext6 \
-        supervisor \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /install /usr/local
 
 COPY conf/*.yml ./conf/
-COPY conf/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
-COPY api.py ui.py ./
+COPY api.py ./
 COPY biz ./biz
+COPY templates ./templates
+COPY static ./static
 
 RUN mkdir -p log data conf
 
-EXPOSE 5001 5002
+EXPOSE 5001
 
-CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
+CMD ["python", "api.py"]

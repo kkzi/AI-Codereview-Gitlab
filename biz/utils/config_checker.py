@@ -1,21 +1,16 @@
 import os
 
-from dotenv import load_dotenv
-
 from biz.llm.factory import Factory
+from biz.llm.config import get_llm_value
 from biz.utils.log import logger
-
-# 指定环境变量文件路径
-ENV_FILE_PATH = "conf/.env"
-load_dotenv(ENV_FILE_PATH)
-
+from biz.utils.llm_status import set_llm_status
 
 REQUIRED_ENV_VARS = [
     "LLM_PROVIDER",
 ]
 
 # 允许的 LLM 供应商
-LLM_PROVIDERS = { "anthropic", "zhipuai", "openai", "deepseek", "ollama", "qwen" }
+LLM_PROVIDERS = {"anthropic", "zhipuai", "openai", "deepseek", "ollama", "qwen"}
 
 # 每种供应商必须配置的键
 LLM_REQUIRED_KEYS = {
@@ -30,7 +25,7 @@ LLM_REQUIRED_KEYS = {
 
 def check_env_vars():
     """检查环境变量"""
-    missing_vars = [var for var in REQUIRED_ENV_VARS if var not in os.environ]
+    missing_vars = [var for var in REQUIRED_ENV_VARS if not get_llm_value(var)]
     if missing_vars:
         logger.warning(f"缺少环境变量: {', '.join(missing_vars)}")
     else:
@@ -39,7 +34,7 @@ def check_env_vars():
 
 def check_llm_provider():
     """检查 LLM 供应商的配置"""
-    llm_provider = os.getenv("LLM_PROVIDER")
+    llm_provider = get_llm_value("LLM_PROVIDER")
 
     if not llm_provider:
         logger.error("LLM_PROVIDER 未设置！")
@@ -50,20 +45,31 @@ def check_llm_provider():
         return
 
     required_keys = LLM_REQUIRED_KEYS.get(llm_provider, [])
-    missing_keys = [key for key in required_keys if not os.getenv(key)]
+    missing_keys = [key for key in required_keys if not get_llm_value(key)]
 
     if missing_keys:
-        logger.error(f"当前 LLM 供应商为 {llm_provider}，但缺少必要的环境变量: {', '.join(missing_keys)}")
+        logger.error(
+            f"当前 LLM 供应商为 {llm_provider}，但缺少必要的环境变量: {', '.join(missing_keys)}"
+        )
     else:
         logger.info(f"LLM 供应商 {llm_provider} 的配置项已设置。")
+
 
 def check_llm_connectivity():
     client = Factory().getClient()
     logger.info(f"正在检查 LLM 供应商的连接...")
-    if client.ping():
+    try:
+        available = bool(client.ping())
+    except Exception:
+        logger.exception("LLM connectivity check failed")
+        available = False
+
+    set_llm_status(available)
+    if available:
         logger.info("LLM 可以连接成功。")
     else:
         logger.error("LLM连接可能有问题，请检查配置项。")
+
 
 def check_config():
     """主检查入口"""

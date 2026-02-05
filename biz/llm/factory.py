@@ -1,5 +1,5 @@
-import os
 import time
+from typing import Optional
 
 from biz.llm.client.base import BaseClient
 from biz.llm.client.anthropic import AnthropicClient
@@ -8,11 +8,13 @@ from biz.llm.client.ollama_client import OllamaClient
 from biz.llm.client.openai import OpenAIClient
 from biz.llm.client.qwen import QwenClient
 from biz.llm.client.zhipuai import ZhipuAIClient
+from biz.llm.config import get_llm_value
 from biz.utils.log import logger
 
 
 class LLMRetryExhaustedError(Exception):
     """LLM 重试次数用尽异常"""
+
     pass
 
 
@@ -28,7 +30,7 @@ class RetryClientWrapper(BaseClient):
 
     def completions(self, messages, model=None):
         """Chat with the model with retry logic."""
-        retry_count = int(os.getenv("LLM_RETRY_COUNT", "5"))
+        retry_count = int(get_llm_value("LLM_RETRY_COUNT", "5"))
         last_error = None
 
         for attempt in range(retry_count):
@@ -36,11 +38,13 @@ class RetryClientWrapper(BaseClient):
                 return self.client.completions(messages=messages, model=model)
             except Exception as e:
                 last_error = e
-                logger.warning(f"AI 模型调用失败 (尝试 {attempt + 1}/{retry_count}): {e}")
+                logger.warning(
+                    f"AI 模型调用失败 (尝试 {attempt + 1}/{retry_count}): {e}"
+                )
 
                 if attempt < retry_count - 1:
                     # 指数退避策略: 1s, 2s, 4s, 8s, 16s
-                    wait_time = min(2 ** attempt, 16)
+                    wait_time = min(2**attempt, 16)
                     logger.info(f"等待 {wait_time} 秒后重试...")
                     time.sleep(wait_time)
 
@@ -52,15 +56,17 @@ class RetryClientWrapper(BaseClient):
 
 class Factory:
     @staticmethod
-    def getClient(provider: str = None) -> BaseClient:
-        provider = provider or os.getenv("LLM_PROVIDER", "anthropic")
+    def getClient(provider: Optional[str] = None) -> BaseClient:
+        provider = provider or (
+            get_llm_value("LLM_PROVIDER", "anthropic") or "anthropic"
+        )
         chat_model_providers = {
-            'anthropic': lambda: AnthropicClient(),
-            'zhipuai': lambda: ZhipuAIClient(),
-            'openai': lambda: OpenAIClient(),
-            'deepseek': lambda: DeepSeekClient(),
-            'qwen': lambda: QwenClient(),
-            'ollama': lambda: OllamaClient()
+            "anthropic": lambda: AnthropicClient(),
+            "zhipuai": lambda: ZhipuAIClient(),
+            "openai": lambda: OpenAIClient(),
+            "deepseek": lambda: DeepSeekClient(),
+            "qwen": lambda: QwenClient(),
+            "ollama": lambda: OllamaClient(),
         }
 
         provider_func = chat_model_providers.get(provider)
@@ -69,4 +75,4 @@ class Factory:
             # 用重试装饰器包装客户端
             return RetryClientWrapper(client)
         else:
-            raise Exception(f'Unknown chat model provider: {provider}')
+            raise Exception(f"Unknown chat model provider: {provider}")

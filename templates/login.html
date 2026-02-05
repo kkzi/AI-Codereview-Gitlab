@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+
+{% block title %}登录 - AI代码审查平台{% endblock %}
+
+{% block head %}
+
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>登录 - AI代码审查平台</title>
+    <link rel="stylesheet" href="/static/login.css">
+
+{% endblock %}
+
+{% block body %}
+
+    <div class="login-container">
+        <div class="login-header">
+            <h1>🤖 AI代码审查平台</h1>
+            <p>代码审查记录中心</p>
+        </div>
+
+        {% if error %}
+        <div class="error">{{ error }}</div>
+        {% endif %}
+
+        {% if DASHBOARD_USER == 'admin' and DASHBOARD_PASSWORD == 'admin' %}
+        <div class="warning">
+            <strong>安全提示：</strong>检测到默认用户名和密码为 'admin'，存在安全风险！<br><br>
+            请立即修改 <code>conf/.env</code> 文件中的 <code>DASHBOARD_USER</code> 和 <code>DASHBOARD_PASSWORD</code> 变量。
+        </div>
+        {% endif %}
+
+        <form method="POST">
+            <div class="form-group">
+                <label for="username">用户名</label>
+                <input type="text" id="username" name="username" required>
+            </div>
+            <div class="form-group">
+                <label for="password">密码</label>
+                <input type="password" id="password" name="password" required>
+            </div>
+            <button type="submit" class="btn">登录</button>
+        </form>
+    </div>
+{% endblock %}
+

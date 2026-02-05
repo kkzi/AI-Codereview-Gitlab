@@ -7,10 +7,10 @@ services:
     container_name: ai-codereview-app
     ports:
       - "5001:5001"
-      - "5002:5002"
     volumes:
       - ./data:/app/data
       - ./log:/app/log
+      - ./conf:/app/conf
     env_file:
       - ./conf/.env
     restart: unless-stopped
