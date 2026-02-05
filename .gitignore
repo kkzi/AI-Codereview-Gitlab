@@ -14,3 +14,7 @@ conf/.env
 __pycache__/
 .cursorignore
 .cursor
+
+conf/llm.yml
+conf/temp.yml
+
