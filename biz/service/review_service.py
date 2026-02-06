@@ -19,7 +19,7 @@ class ReviewService:
 
         from biz.llm.config import get_llm_value
 
-        provider = get_llm_value("LLM_PROVIDER", "unknown")
+        provider = get_llm_value("LLM_PROVIDER", "unknown") or "unknown"
         api_model_env_map = {
             "anthropic": "ANTHROPIC_API_MODEL",
             "zhipuai": "ZHIPUAI_API_MODEL",
@@ -83,13 +83,17 @@ class ReviewService:
                             commit_messages TEXT,
                             score INTEGER,
                             model_name TEXT DEFAULT '',
+                            language TEXT DEFAULT '',
                             url TEXT,
                             review_result TEXT,
                             additions INTEGER DEFAULT 0,
                             deletions INTEGER DEFAULT 0,
                             last_commit_id TEXT DEFAULT '',
                             status TEXT DEFAULT 'success',
-                            retry_count INTEGER DEFAULT 0
+                            retry_count INTEGER DEFAULT 0,
+                            project_url TEXT DEFAULT '',
+                            commit_url TEXT DEFAULT '',
+                            event_id INTEGER DEFAULT NULL
                         )
                     """)
                 cursor.execute("""
@@ -103,12 +107,28 @@ class ReviewService:
                             commit_messages TEXT,
                             score INTEGER,
                             model_name TEXT DEFAULT '',
+                            language TEXT DEFAULT '',
                             review_result TEXT,
                             additions INTEGER DEFAULT 0,
                             deletions INTEGER DEFAULT 0,
                             last_commit_id TEXT DEFAULT '',
                             status TEXT DEFAULT 'success',
-                            retry_count INTEGER DEFAULT 0
+                            retry_count INTEGER DEFAULT 0,
+                            project_url TEXT DEFAULT '',
+                            commit_url TEXT DEFAULT '',
+                            event_id INTEGER DEFAULT NULL
+                        )
+                    """)
+                cursor.execute("""
+                        CREATE TABLE IF NOT EXISTS webhook_event_log (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            review_type TEXT,
+                            source TEXT,
+                            event_type TEXT,
+                            project_name TEXT,
+                            project_url TEXT,
+                            created_at INTEGER,
+                            payload TEXT
                         )
                     """)
                 # 确保旧版本的mr_review_log、push_review_log表添加必要字段
@@ -124,6 +144,7 @@ class ReviewService:
                         "author_display_name",
                         "model_name",
                         "language",
+                        "event_id",
                     ],
                     "push_review_log": [
                         "additions",
@@ -136,6 +157,7 @@ class ReviewService:
                         "author_display_name",
                         "model_name",
                         "language",
+                        "event_id",
                     ],
                 }
                 for table, columns in tables_columns.items():
@@ -175,6 +197,10 @@ class ReviewService:
                                 cursor.execute(
                                     f"ALTER TABLE {table} ADD COLUMN {column} TEXT DEFAULT ''"
                                 )
+                            elif column == "event_id":
+                                cursor.execute(
+                                    f"ALTER TABLE {table} ADD COLUMN {column} INTEGER DEFAULT NULL"
+                                )
 
                 conn.commit()
                 # 添加时间字段索引
@@ -208,8 +234,8 @@ class ReviewService:
                     """
                                 INSERT INTO mr_review_log (project_name,author, author_display_name, source_branch, target_branch,
                                 updated_at, commit_messages, score, model_name, language, url,review_result, additions, deletions,
-                                last_commit_id, status, project_url, commit_url)
-                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                last_commit_id, status, project_url, commit_url, event_id)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                             """,
                     (
                         entity.project_name,
@@ -230,6 +256,7 @@ class ReviewService:
                         status,
                         project_url,
                         commit_url,
+                        entity.event_id,
                     ),
                 )
                 conn.commit()
@@ -254,7 +281,7 @@ class ReviewService:
                 cursor.execute(
                     """
                     UPDATE mr_review_log 
-                    SET score = ?, model_name = ?, language = ?, review_result = ?, status = ?, updated_at = ?, retry_count = retry_count + 1
+                    SET score = ?, model_name = ?, language = ?, review_result = ?, status = ?, retry_count = retry_count + 1
                     WHERE id = ?
                 """,
                     (
@@ -263,7 +290,6 @@ class ReviewService:
                         language or "",
                         review_result,
                         status,
-                        int(datetime.datetime.now().timestamp()),
                         record_id,
                     ),
                 )
@@ -284,8 +310,12 @@ class ReviewService:
         try:
             with sqlite3.connect(ReviewService.DB_FILE) as conn:
                 query = """
-                            SELECT id, project_name, project_url, author, author_display_name, source_branch, target_branch, updated_at, commit_messages, score, model_name, language, url, review_result, additions, deletions, status, commit_url
-                            FROM mr_review_log
+                            SELECT mr.id, mr.project_name, mr.project_url, mr.author, mr.author_display_name, mr.source_branch, mr.target_branch,
+                                   COALESCE(ev.created_at, mr.updated_at) AS updated_at,
+                                   mr.commit_messages, mr.score, mr.model_name, mr.language, mr.url, mr.review_result, mr.additions, mr.deletions,
+                                   mr.status, mr.commit_url
+                            FROM mr_review_log mr
+                            LEFT JOIN webhook_event_log ev ON mr.event_id = ev.id
                             WHERE 1=1
                             """
                 params = []
@@ -302,11 +332,11 @@ class ReviewService:
                     params.extend(project_names)
 
                 if updated_at_gte is not None:
-                    query += " AND updated_at >= ?"
+                    query += " AND COALESCE(ev.created_at, mr.updated_at) >= ?"
                     params.append(updated_at_gte)
 
                 if updated_at_lte is not None:
-                    query += " AND updated_at <= ?"
+                    query += " AND COALESCE(ev.created_at, mr.updated_at) <= ?"
                     params.append(updated_at_lte)
                 query += " ORDER BY updated_at DESC"
                 df = pd.read_sql_query(sql=query, con=conn, params=params)
@@ -317,12 +347,12 @@ class ReviewService:
 
     @staticmethod
     def get_mr_review_logs_paginated(
-        authors: list = None,
-        project_names: list = None,
-        language: str = None,
-        updated_at_gte: int = None,
-        updated_at_lte: int = None,
-        status: str = None,
+        authors: list | None = None,
+        project_names: list | None = None,
+        language: str | None = None,
+        updated_at_gte: int | None = None,
+        updated_at_lte: int | None = None,
+        status: str | None = None,
         limit: int = 50,
         offset: int = 0,
         sort: str = "updated_at",
@@ -343,49 +373,54 @@ class ReviewService:
 
         try:
             with sqlite3.connect(ReviewService.DB_FILE) as conn:
+                base_from = " FROM mr_review_log mr LEFT JOIN webhook_event_log ev ON mr.event_id = ev.id"
                 base_where = " WHERE 1=1 "
                 params: list = []
 
                 if authors:
                     placeholders = ",".join(["?"] * len(authors))
-                    base_where += f" AND (author IN ({placeholders}) OR author_display_name IN ({placeholders}))"
+                    base_where += f" AND (mr.author IN ({placeholders}) OR mr.author_display_name IN ({placeholders}))"
                     params.extend(authors)
                     params.extend(authors)
 
                 if project_names:
                     placeholders = ",".join(["?"] * len(project_names))
-                    base_where += f" AND project_name IN ({placeholders})"
+                    base_where += f" AND mr.project_name IN ({placeholders})"
                     params.extend(project_names)
 
                 if language:
-                    base_where += " AND language = ?"
+                    base_where += " AND mr.language = ?"
                     params.append(language)
 
                 if updated_at_gte is not None:
-                    base_where += " AND updated_at >= ?"
+                    base_where += " AND COALESCE(ev.created_at, mr.updated_at) >= ?"
                     params.append(updated_at_gte)
 
                 if updated_at_lte is not None:
-                    base_where += " AND updated_at <= ?"
+                    base_where += " AND COALESCE(ev.created_at, mr.updated_at) <= ?"
                     params.append(updated_at_lte)
 
                 if status in {"success", "failed"}:
-                    base_where += " AND status = ?"
+                    base_where += " AND mr.status = ?"
                     params.append(status)
 
                 # total
-                total_query = "SELECT COUNT(*) FROM mr_review_log" + base_where
+                total_query = "SELECT COUNT(*)" + base_from + base_where
                 total = conn.execute(total_query, params).fetchone()[0]
 
                 # filters (from filtered dataset)
-                authors_query = "SELECT DISTINCT author FROM mr_review_log" + base_where
-                authors_list = [
-                    r[0]
-                    for r in conn.execute(authors_query, params).fetchall()
-                    if r and r[0]
-                ]
+                authors_query = (
+                    "SELECT DISTINCT mr.author_display_name" + base_from + base_where
+                )
+                authors_list = []
+                for row in conn.execute(authors_query, params).fetchall():
+                    if not row:
+                        continue
+                    display_name = (row[0] or "").strip()
+                    if display_name:
+                        authors_list.append(display_name)
                 projects_query = (
-                    "SELECT DISTINCT project_name FROM mr_review_log" + base_where
+                    "SELECT DISTINCT mr.project_name" + base_from + base_where
                 )
                 projects_list = [
                     r[0]
@@ -393,9 +428,7 @@ class ReviewService:
                     if r and r[0]
                 ]
 
-                languages_query = (
-                    "SELECT DISTINCT language FROM mr_review_log" + base_where
-                )
+                languages_query = "SELECT DISTINCT mr.language" + base_from + base_where
                 languages_list = [
                     r[0]
                     for r in conn.execute(languages_query, params).fetchall()
@@ -405,11 +438,12 @@ class ReviewService:
                 # stats (from filtered dataset)
                 stats_query = (
                     "SELECT "
-                    "COUNT(*) as total, "
-                    "SUM(CASE WHEN status='success' THEN 1 ELSE 0 END) as success, "
-                    "SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) as failed, "
-                    "AVG(COALESCE(score, 0)) as avg_score "
-                    "FROM mr_review_log" + base_where
+                    "SUM(CASE WHEN mr.status != 'failed' AND mr.score IS NOT NULL AND mr.score != 0 THEN 1 ELSE 0 END) as total, "
+                    "SUM(CASE WHEN mr.status='success' THEN 1 ELSE 0 END) as success, "
+                    "SUM(CASE WHEN mr.status='failed' THEN 1 ELSE 0 END) as failed, "
+                    "AVG(CASE WHEN mr.status != 'failed' AND mr.score IS NOT NULL AND mr.score != 0 THEN mr.score END) as avg_score "
+                    + base_from
+                    + base_where
                 )
                 stats_row = conn.execute(stats_query, params).fetchone()
                 stats = {
@@ -419,12 +453,21 @@ class ReviewService:
                     "avg_score": round(float(stats_row[3] or 0), 1),
                 }
 
+                sort_map = {
+                    "updated_at": "updated_at",
+                    "score": "mr.score",
+                    "project_name": "mr.project_name",
+                    "author": "mr.author",
+                    "status": "mr.status",
+                }
+                order_by = sort_map.get(sort, "updated_at")
                 query = (
-                    "SELECT id, project_name, project_url, author, author_display_name, source_branch, target_branch, updated_at, "
-                    "commit_messages, score, model_name, language, url, review_result, additions, deletions, status, commit_url "
-                    "FROM mr_review_log"
+                    "SELECT mr.id, mr.project_name, mr.project_url, mr.author, mr.author_display_name, mr.source_branch, mr.target_branch, "
+                    "COALESCE(ev.created_at, mr.updated_at) AS updated_at, "
+                    "mr.commit_messages, mr.score, mr.model_name, mr.language, mr.url, mr.review_result, mr.additions, mr.deletions, mr.status, mr.commit_url "
+                    + base_from
                     + base_where
-                    + f" ORDER BY {sort} {order} LIMIT ? OFFSET ?"
+                    + f" ORDER BY {order_by} {order} LIMIT ? OFFSET ?"
                 )
                 page_params = params + [int(limit), int(offset)]
                 df = pd.read_sql_query(sql=query, con=conn, params=page_params)
@@ -481,8 +524,8 @@ class ReviewService:
                 commit_url = entity.commits[-1].get("url", "") if entity.commits else ""
                 cursor.execute(
                     """
-                                INSERT INTO push_review_log (project_name,author, author_display_name, branch, updated_at, commit_messages, score, model_name, language, review_result, additions, deletions, status, project_url, commit_url)
-                                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                INSERT INTO push_review_log (project_name,author, author_display_name, branch, updated_at, commit_messages, score, model_name, language, review_result, additions, deletions, status, project_url, commit_url, event_id, last_commit_id)
+                                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                             """,
                     (
                         entity.project_name,
@@ -500,6 +543,8 @@ class ReviewService:
                         status,
                         project_url,
                         commit_url,
+                        entity.event_id,
+                        (entity.commits[-1].get("id") if entity.commits else "") or "",
                     ),
                 )
                 conn.commit()
@@ -524,7 +569,7 @@ class ReviewService:
                 cursor.execute(
                     """
                     UPDATE push_review_log 
-                    SET score = ?, model_name = ?, language = ?, review_result = ?, status = ?, updated_at = ?, retry_count = retry_count + 1
+                    SET score = ?, model_name = ?, language = ?, review_result = ?, status = ?, retry_count = retry_count + 1
                     WHERE id = ?
                 """,
                     (
@@ -533,7 +578,6 @@ class ReviewService:
                         language or "",
                         review_result,
                         status,
-                        int(datetime.datetime.now().timestamp()),
                         record_id,
                     ),
                 )
@@ -590,7 +634,7 @@ class ReviewService:
             return pd.DataFrame()
 
     @staticmethod
-    def get_mr_review_log_by_id(record_id: int) -> dict:
+    def get_mr_review_log_by_id(record_id: int) -> dict | None:
         """根据 ID 获取 MR 审查记录"""
         try:
             with sqlite3.connect(ReviewService.DB_FILE) as conn:
@@ -598,7 +642,7 @@ class ReviewService:
                 cursor.execute(
                     """
                     SELECT id, project_name, project_url, author, author_display_name, source_branch, target_branch, updated_at, 
-                           commit_messages, score, model_name, language, url, review_result, additions, deletions, last_commit_id, status, retry_count, commit_url
+                           commit_messages, score, model_name, language, url, review_result, additions, deletions, last_commit_id, status, retry_count, commit_url, event_id
                     FROM mr_review_log WHERE id = ?
                 """,
                     (record_id,),
@@ -627,6 +671,7 @@ class ReviewService:
                         "status": row[17],
                         "retry_count": row[18],
                         "commit_url": row[19],
+                        "event_id": row[20],
                     }
                 return None
         except sqlite3.DatabaseError as e:
@@ -634,7 +679,7 @@ class ReviewService:
             return None
 
     @staticmethod
-    def get_push_review_log_by_id(record_id: int) -> dict:
+    def get_push_review_log_by_id(record_id: int) -> dict | None:
         """根据 ID 获取 Push 审查记录"""
         try:
             with sqlite3.connect(ReviewService.DB_FILE) as conn:
@@ -642,7 +687,7 @@ class ReviewService:
                 cursor.execute(
                     """
                     SELECT id, project_name, project_url, author, author_display_name, branch, updated_at, 
-                           commit_messages, score, model_name, language, review_result, additions, deletions, last_commit_id, status, retry_count, commit_url
+                           commit_messages, score, model_name, language, review_result, additions, deletions, last_commit_id, status, retry_count, commit_url, event_id
                     FROM push_review_log WHERE id = ?
                 """,
                     (record_id,),
@@ -669,6 +714,7 @@ class ReviewService:
                         "status": row[15],
                         "retry_count": row[16],
                         "commit_url": row[17],
+                        "event_id": row[18],
                     }
                 return None
         except sqlite3.DatabaseError as e:
@@ -687,8 +733,11 @@ class ReviewService:
             with sqlite3.connect(ReviewService.DB_FILE) as conn:
                 # 基础查询
                 query = """
-                    SELECT id, project_name, project_url, author, author_display_name, branch, updated_at, commit_messages, score, model_name, language, review_result, additions, deletions, status, commit_url
-                    FROM push_review_log
+                    SELECT pr.id, pr.project_name, pr.project_url, pr.author, pr.author_display_name, pr.branch,
+                           COALESCE(ev.created_at, pr.updated_at) AS updated_at,
+                           pr.commit_messages, pr.score, pr.model_name, pr.language, pr.review_result, pr.additions, pr.deletions, pr.status, pr.commit_url
+                    FROM push_review_log pr
+                    LEFT JOIN webhook_event_log ev ON pr.event_id = ev.id
                     WHERE 1=1
                 """
                 params = []
@@ -707,12 +756,12 @@ class ReviewService:
 
                 # 动态添加 updated_at_gte 条件
                 if updated_at_gte is not None:
-                    query += " AND updated_at >= ?"
+                    query += " AND COALESCE(ev.created_at, pr.updated_at) >= ?"
                     params.append(updated_at_gte)
 
                 # 动态添加 updated_at_lte 条件
                 if updated_at_lte is not None:
-                    query += " AND updated_at <= ?"
+                    query += " AND COALESCE(ev.created_at, pr.updated_at) <= ?"
                     params.append(updated_at_lte)
 
                 # 按 updated_at 降序排序
@@ -727,12 +776,12 @@ class ReviewService:
 
     @staticmethod
     def get_push_review_logs_paginated(
-        authors: list = None,
-        project_names: list = None,
-        language: str = None,
-        updated_at_gte: int = None,
-        updated_at_lte: int = None,
-        status: str = None,
+        authors: list | None = None,
+        project_names: list | None = None,
+        language: str | None = None,
+        updated_at_gte: int | None = None,
+        updated_at_lte: int | None = None,
+        status: str | None = None,
         limit: int = 50,
         offset: int = 0,
         sort: str = "updated_at",
@@ -787,13 +836,16 @@ class ReviewService:
                 total = conn.execute(total_query, params).fetchone()[0]
 
                 authors_query = (
-                    "SELECT DISTINCT author FROM push_review_log" + base_where
+                    "SELECT DISTINCT author_display_name FROM push_review_log"
+                    + base_where
                 )
-                authors_list = [
-                    r[0]
-                    for r in conn.execute(authors_query, params).fetchall()
-                    if r and r[0]
-                ]
+                authors_list = []
+                for row in conn.execute(authors_query, params).fetchall():
+                    if not row:
+                        continue
+                    display_name = (row[0] or "").strip()
+                    if display_name:
+                        authors_list.append(display_name)
                 projects_query = (
                     "SELECT DISTINCT project_name FROM push_review_log" + base_where
                 )
@@ -814,10 +866,10 @@ class ReviewService:
 
                 stats_query = (
                     "SELECT "
-                    "COUNT(*) as total, "
+                    "SUM(CASE WHEN status != 'failed' AND score IS NOT NULL AND score != 0 THEN 1 ELSE 0 END) as total, "
                     "SUM(CASE WHEN status='success' THEN 1 ELSE 0 END) as success, "
                     "SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) as failed, "
-                    "AVG(COALESCE(score, 0)) as avg_score "
+                    "AVG(CASE WHEN status != 'failed' AND score IS NOT NULL AND score != 0 THEN score END) as avg_score "
                     "FROM push_review_log" + base_where
                 )
                 stats_row = conn.execute(stats_query, params).fetchone()

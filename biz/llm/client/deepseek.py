@@ -14,15 +14,26 @@ class DeepSeekClient(BaseClient):
         self.base_url = str(
             get_llm_value("DEEPSEEK_API_BASE_URL", "https://api.deepseek.com")
         )
+        try:
+            self.timeout = float(get_llm_value("LLM_TIMEOUT", "60"))
+        except Exception:
+            self.timeout = 60.0
         if not resolved_key:
             raise ValueError(
                 "API key is required. Please provide it or set it in the environment variables."
             )
 
         self.api_key = resolved_key
-        self.client = OpenAI(
-            api_key=self.api_key, base_url=self.base_url
-        )  # DeepSeek supports OpenAI API SDK
+        try:
+            self.client = OpenAI(
+                api_key=self.api_key,
+                base_url=self.base_url,
+                timeout=self.timeout,
+            )  # DeepSeek supports OpenAI API SDK
+        except TypeError:
+            self.client = OpenAI(
+                api_key=self.api_key, base_url=self.base_url
+            )  # DeepSeek supports OpenAI API SDK
         self.default_model = str(get_llm_value("DEEPSEEK_API_MODEL", "deepseek-chat"))
 
     def completions(

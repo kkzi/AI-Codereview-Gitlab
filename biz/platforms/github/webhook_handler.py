@@ -5,6 +5,7 @@ import time
 import requests
 import fnmatch
 from biz.utils.log import logger
+from biz.utils.http import request_with_retry
 
 
 
@@ -93,7 +94,7 @@ class PullRequestHandler:
                 'Authorization': f'token {self.github_token}',
                 'Accept': 'application/vnd.github.v3+json'
             }
-            response = requests.get(url, headers=headers)
+            response = request_with_retry("GET", url, headers=headers, retries=1)
             logger.debug(
                 f"Get changes response from GitHub (attempt {attempt + 1}): {response.status_code}, {response.text}, URL: {url}")
 
@@ -135,7 +136,7 @@ class PullRequestHandler:
             'Authorization': f'token {self.github_token}',
             'Accept': 'application/vnd.github.v3+json'
         }
-        response = requests.get(url, headers=headers)
+        response = request_with_retry("GET", url, headers=headers)
         logger.debug(f"Get commits response from GitHub: {response.status_code}, {response.text}")
         
         # 检查请求是否成功
@@ -168,7 +169,9 @@ class PullRequestHandler:
         data = {
             'body': review_result
         }
-        response = requests.post(url, headers=headers, json=data)
+        response = request_with_retry(
+            "POST", url, headers=headers, json=data, retries=1
+        )
         logger.debug(f"Add comment to GitHub PR {url}: {response.status_code}, {response.text}")
         if response.status_code == 201:
             logger.info("Comment successfully added to pull request.")
@@ -183,7 +186,7 @@ class PullRequestHandler:
             'Accept': 'application/vnd.github.v3+json'
         }
 
-        response = requests.get(url, headers=headers)
+        response = request_with_retry("GET", url, headers=headers)
         if response.status_code == 200:
             data = response.json()
             target_branch = self.webhook_data['pull_request']['base']['ref']
@@ -255,7 +258,9 @@ class PushHandler:
         data = {
             'body': message
         }
-        response = requests.post(url, headers=headers, json=data)
+        response = request_with_retry(
+            "POST", url, headers=headers, json=data, retries=1
+        )
         logger.debug(f"Add comment to commit {last_commit_id}: {response.status_code}, {response.text}")
         if response.status_code == 201:
             logger.info("Comment successfully added to push commit.")
@@ -270,7 +275,7 @@ class PushHandler:
             'Authorization': f'token {self.github_token}',
             'Accept': 'application/vnd.github.v3+json'
         }
-        response = requests.get(url, headers=headers)
+        response = request_with_retry("GET", url, headers=headers)
         logger.debug(
             f"Get commits response from GitHub for repository_commits: {response.status_code}, {response.text}, URL: {url}")
 
@@ -287,7 +292,7 @@ class PushHandler:
             'Authorization': f'token {self.github_token}',
             'Accept': 'application/vnd.github.v3+json'
         }
-        response = requests.get(url, headers=headers)
+        response = request_with_retry("GET", url, headers=headers)
         logger.debug(
             f"Get commit response from GitHub: {response.status_code}, {response.text}, URL: {url}")
 
@@ -302,7 +307,7 @@ class PushHandler:
             'Authorization': f'token {self.github_token}',
             'Accept': 'application/vnd.github.v3+json'
         }
-        response = requests.get(url, headers=headers)
+        response = request_with_retry("GET", url, headers=headers)
         logger.debug(
             f"Get changes response from GitHub for repository_compare: {response.status_code}, {response.text}, URL: {url}")
 

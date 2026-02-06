@@ -10,13 +10,20 @@ from biz.llm.types import NotGiven, NOT_GIVEN
 class ZhipuAIClient(BaseClient):
     def __init__(self, api_key: Optional[str] = None):
         resolved_key = api_key or (get_llm_value("ZHIPUAI_API_KEY") or "")
+        try:
+            self.timeout = float(get_llm_value("LLM_TIMEOUT", "60"))
+        except Exception:
+            self.timeout = 60.0
         if not resolved_key:
             raise ValueError(
                 "API key is required. Please provide it or set it in the environment variables."
             )
 
         self.api_key = resolved_key
-        self.client = ZhipuAI(api_key=self.api_key)
+        try:
+            self.client = ZhipuAI(api_key=self.api_key, timeout=self.timeout)
+        except TypeError:
+            self.client = ZhipuAI(api_key=self.api_key)
         self.default_model = str(get_llm_value("ZHIPUAI_API_MODEL", "GLM-4-Flash"))
 
     def completions(

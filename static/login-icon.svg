@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" role="img" aria-label="AI Review">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#3b82f6"/>
+      <stop offset="1" stop-color="#22c55e"/>
+    </linearGradient>
+  </defs>
+  <rect x="8" y="8" width="80" height="80" rx="22" fill="#0f172a"/>
+  <path d="M48 18l18 7v20c0 12.4-8.2 23.3-18 27-9.8-3.7-18-14.6-18-27V25l18-7z" fill="url(#g)"/>
+  <path d="M36 46l7 7 17-17" stroke="#0f172a" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

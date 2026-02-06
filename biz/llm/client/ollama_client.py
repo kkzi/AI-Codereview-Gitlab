@@ -17,9 +17,19 @@ class OllamaClient(BaseClient):
         self.base_url = str(
             get_llm_value("OLLAMA_API_BASE_URL", "http://127.0.0.1:11434")
         )
-        self.client = Client(
-            host=self.base_url,
-        )
+        try:
+            self.timeout = float(get_llm_value("LLM_TIMEOUT", "60"))
+        except Exception:
+            self.timeout = 60.0
+        try:
+            self.client = Client(
+                host=self.base_url,
+                timeout=self.timeout,
+            )
+        except TypeError:
+            self.client = Client(
+                host=self.base_url,
+            )
 
     def _extract_content(self, content: str) -> str:
         """

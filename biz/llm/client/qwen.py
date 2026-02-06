@@ -15,13 +15,22 @@ class QwenClient(BaseClient):
                 "QWEN_API_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"
             )
         )
+        try:
+            self.timeout = float(get_llm_value("LLM_TIMEOUT", "60"))
+        except Exception:
+            self.timeout = 60.0
         if not resolved_key:
             raise ValueError(
                 "API key is required. Please provide it or set it in the environment variables."
             )
 
         self.api_key = resolved_key
-        self.client = OpenAI(api_key=self.api_key, base_url=self.base_url)
+        try:
+            self.client = OpenAI(
+                api_key=self.api_key, base_url=self.base_url, timeout=self.timeout
+            )
+        except TypeError:
+            self.client = OpenAI(api_key=self.api_key, base_url=self.base_url)
         self.default_model = str(get_llm_value("QWEN_API_MODEL", "qwen-coder-plus"))
         self.extra_body = {"enable_thinking": False}
 

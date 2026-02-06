@@ -12,6 +12,10 @@ class AnthropicClient(BaseClient):
     def __init__(self, api_key: Optional[str] = None):
         resolved_key = api_key or (get_llm_value("ANTHROPIC_API_KEY") or "")
         self.base_url = get_llm_value("ANTHROPIC_API_BASE_URL") or None
+        try:
+            self.timeout = float(get_llm_value("LLM_TIMEOUT", "60"))
+        except Exception:
+            self.timeout = 60.0
         if not resolved_key:
             raise ValueError(
                 "API key is required. Please provide it or set ANTHROPIC_API_KEY in the environment variables."
@@ -19,7 +23,7 @@ class AnthropicClient(BaseClient):
 
         # Create a custom httpx client to avoid proxy-related issues
         # This prevents the 'proxies' parameter error when environment proxy variables are set
-        http_client = httpx.Client()
+        http_client = httpx.Client(timeout=self.timeout)
 
         self.api_key = resolved_key
         # Initialize Anthropic client with custom http_client

@@ -27,6 +27,49 @@ from biz.utils.im import notifier
 from biz.utils.log import logger
 
 
+def _sum_changes(changes: list[dict]) -> tuple[int, int]:
+    additions = 0
+    deletions = 0
+    for item in changes or []:
+        additions += int(item.get("additions", 0) or 0)
+        deletions += int(item.get("deletions", 0) or 0)
+    return additions, deletions
+
+
+def _log_skip(reason: str, review_type: str = "", record_id: int | None = None):
+    prefix = f"{review_type} " if review_type else ""
+    suffix = f", record_id={record_id}" if record_id is not None else ""
+    logger.info(f"[SKIP_LLM] {prefix}{reason}{suffix}")
+
+
+def _mark_skipped(
+    review_type: str,
+    record_id: int | None,
+    reason: str,
+    language: str = "",
+):
+    _log_skip(reason, review_type=review_type, record_id=record_id)
+    if record_id is None:
+        return
+    msg = f"跳过 AI 审查：{reason}"
+    if review_type == "mr":
+        ReviewService.update_mr_review_log(
+            record_id=record_id,
+            score=0,
+            review_result=msg,
+            status="skipped",
+            language=language,
+        )
+    elif review_type == "push":
+        ReviewService.update_push_review_log(
+            record_id=record_id,
+            score=0,
+            review_result=msg,
+            status="skipped",
+            language=language,
+        )
+
+
 def get_model_name():
     """获取当前使用的AI模型名称，从.env中的xxx_API_MODEL字段读取"""
     provider = get_llm_value("LLM_PROVIDER", "unknown")
@@ -66,33 +109,40 @@ def handle_push_event(
     gitlab_url: str,
     gitlab_url_slug: str,
     record_id: int = None,
+    event_id: int = None,
 ):
     push_review_enabled = os.environ.get("PUSH_REVIEW_ENABLED", "0") == "1"
+    language = ""
     try:
         handler = PushHandler(webhook_data, gitlab_token, gitlab_url)
         logger.info("Push Hook event received")
         commits = handler.get_push_commits()
         if not commits:
             logger.error("Failed to get commits")
+            _mark_skipped("push", record_id, "未获取到提交记录")
             if record_id is not None:
-                ReviewService.update_push_review_log(
-                    record_id=record_id,
-                    score=0,
-                    review_result="Failed to get commits",
-                    status="failed",
-                    language=language,
-                )
-            return
+                return
 
         review_result = None
         score = 0
         additions = 0
         deletions = 0
-        language = ""
         author_display_name = webhook_data.get("user_name") or webhook_data.get(
             "user_username"
         )
-        if push_review_enabled:
+        if not push_review_enabled:
+            _log_skip("PUSH_REVIEW_ENABLED 未开启", review_type="push", record_id=record_id)
+            review_result = "AI 审查未启用"
+            if record_id is not None:
+                ReviewService.update_push_review_log(
+                    record_id=record_id,
+                    score=0,
+                    review_result=review_result,
+                    status="skipped",
+                    language="",
+                )
+                return
+        else:
             # 获取PUSH的changes
             changes = handler.get_push_changes()
             logger.info("changes: %s", changes)
@@ -101,9 +151,24 @@ def handle_push_event(
                 logger.info(
                     "未检测到PUSH代码的修改,修改文件可能不满足SUPPORTED_EXTENSIONS。"
                 )
+                _log_skip(
+                    "未检测到有效变更或文件类型不支持",
+                    review_type="push",
+                    record_id=record_id,
+                )
             review_result = "关注的文件没有修改"
 
             language = CodeReviewer.detect_primary_language_name(changes)
+
+            if len(changes) == 0 and record_id is not None:
+                ReviewService.update_push_review_log(
+                    record_id=record_id,
+                    score=0,
+                    review_result=review_result,
+                    status="skipped",
+                    language=language,
+                )
+                return
 
             if len(changes) > 0:
                 commits_text = ";".join(
@@ -114,9 +179,7 @@ def handle_push_event(
                         str(changes), commits_text, changes=changes
                     )
                     score = CodeReviewer.parse_review_score(review_text=review_result)
-                    for item in changes:
-                        additions += item["additions"]
-                        deletions += item["deletions"]
+                    additions, deletions = _sum_changes(changes)
                     # 提交审查结果到 GitLab
                     handler.add_push_notes(review_result)
                 except LLMRetryExhaustedError as e:
@@ -127,13 +190,6 @@ def handle_push_event(
                     score = 0
                     # 发送失败事件，status='failed'
                     if record_id is not None:
-                        ReviewService.update_push_review_log(
-                            record_id=record_id,
-                            score=0,
-                            review_result=review_result,
-                            status="failed",
-                            language=language,
-                        )
                         return
 
                     event_manager["push_reviewed"].send(
@@ -153,6 +209,7 @@ def handle_push_event(
                             webhook_data=webhook_data,
                             additions=additions,
                             deletions=deletions,
+                            event_id=event_id,
                         ),
                         status="failed",
                     )
@@ -183,6 +240,7 @@ def handle_push_event(
                 webhook_data=webhook_data,
                 additions=additions,
                 deletions=deletions,
+                event_id=event_id,
             ),
             status="success",
         )
@@ -199,6 +257,7 @@ def handle_merge_request_event(
     gitlab_url: str,
     gitlab_url_slug: str,
     record_id: int = None,
+    event_id: int = None,
 ):
     """
     处理Merge Request Hook事件
@@ -225,6 +284,7 @@ def handle_merge_request_event(
             msg = f"[通知] MR为草稿（draft），未触发AI审查。\n项目: {webhook_data['project']['name']}\n作者: {webhook_data['user']['username']}\n源分支: {object_attributes.get('source_branch')}\n目标分支: {object_attributes.get('target_branch')}\n链接: {object_attributes.get('url')}"
             notifier.send_notification(content=msg)
             logger.info("MR为draft，仅发送通知，不触发AI review。")
+            _mark_skipped("mr", record_id, "MR 为 draft")
             return
 
         # 如果开启了仅review projected branches的，判断当前目标分支是否为projected branches
@@ -235,10 +295,12 @@ def handle_merge_request_event(
             logger.info(
                 "Merge Request target branch not match protected branches, ignored."
             )
+            _mark_skipped("mr", record_id, "目标分支非受保护分支")
             return
 
         if handler.action not in ["open", "update"]:
             logger.info(f"Merge Request Hook event, action={handler.action}, ignored.")
+            _mark_skipped("mr", record_id, f"action={handler.action} 非 open/update")
             return
 
         # 检查last_commit_id是否已经存在，如果存在则跳过处理
@@ -254,6 +316,7 @@ def handle_merge_request_event(
                 logger.info(
                     f"Merge Request with last_commit_id {last_commit_id} already exists, skipping review for {project_name}."
                 )
+                _mark_skipped("mr", record_id, f"last_commit_id={last_commit_id} 已存在")
                 return
 
         # 仅仅在MR创建或更新时进行Code Review
@@ -265,29 +328,18 @@ def handle_merge_request_event(
             logger.info(
                 "未检测到有关代码的修改,修改文件可能不满足SUPPORTED_EXTENSIONS。"
             )
+            _mark_skipped("mr", record_id, "未检测到有效变更或文件类型不支持")
             return
 
         language = CodeReviewer.detect_primary_language_name(changes)
-        # 统计本次新增、删除的代码总数
-        additions = 0
-        deletions = 0
-        for item in changes:
-            additions += item.get("additions", 0)
-            deletions += item.get("deletions", 0)
+        additions, deletions = _sum_changes(changes)
 
         # 获取Merge Request的commits
         commits = handler.get_merge_request_commits()
         if not commits:
             logger.error("Failed to get commits")
             if record_id is not None:
-                ReviewService.update_mr_review_log(
-                    record_id=record_id,
-                    score=0,
-                    review_result="Failed to get commits",
-                    status="failed",
-                    language=language,
-                )
-            return
+                return
 
         # review 代码
         commits_text = ";".join(commit["title"] for commit in commits)
@@ -307,13 +359,6 @@ def handle_merge_request_event(
             author_info = webhook_data.get("user", {})
             author_display_name = author_info.get("name") or author_info.get("username")
             if record_id is not None:
-                ReviewService.update_mr_review_log(
-                    record_id=record_id,
-                    score=0,
-                    review_result=review_result,
-                    status="failed",
-                    language=language,
-                )
                 return
 
             event_manager["merge_request_reviewed"].send(
@@ -334,6 +379,7 @@ def handle_merge_request_event(
                     additions=additions,
                     deletions=deletions,
                     last_commit_id=last_commit_id,
+                    event_id=event_id,
                 ),
                 status="failed",
             )
@@ -369,6 +415,7 @@ def handle_merge_request_event(
                 additions=additions,
                 deletions=deletions,
                 last_commit_id=last_commit_id,
+                event_id=event_id,
             ),
             status="success",
         )
@@ -382,7 +429,11 @@ def handle_merge_request_event(
 
 
 def handle_github_push_event(
-    webhook_data: dict, github_token: str, github_url: str, github_url_slug: str
+    webhook_data: dict,
+    github_token: str,
+    github_url: str,
+    github_url_slug: str,
+    event_id: int = None,
 ):
     push_review_enabled = os.environ.get("PUSH_REVIEW_ENABLED", "0") == "1"
     try:
@@ -391,6 +442,7 @@ def handle_github_push_event(
         commits = handler.get_push_commits()
         if not commits:
             logger.error("Failed to get commits")
+            _log_skip("未获取到提交记录", review_type="github push")
             return
 
         review_result = None
@@ -407,7 +459,10 @@ def handle_github_push_event(
         author_display_name = (
             pusher.get("name") or head_commit_author.get("name") or sender.get("login")
         )
-        if push_review_enabled:
+        if not push_review_enabled:
+            _log_skip("PUSH_REVIEW_ENABLED 未开启", review_type="github push")
+            review_result = "AI 审查未启用"
+        else:
             # 获取PUSH的changes
             changes = handler.get_push_changes()
             logger.info("changes: %s", changes)
@@ -416,6 +471,10 @@ def handle_github_push_event(
             if not changes:
                 logger.info(
                     "未检测到PUSH代码的修改,修改文件可能不满足SUPPORTED_EXTENSIONS。"
+                )
+                _log_skip(
+                    "未检测到有效变更或文件类型不支持",
+                    review_type="github push",
                 )
             review_result = "关注的文件没有修改"
 
@@ -428,9 +487,7 @@ def handle_github_push_event(
                         str(changes), commits_text, changes=changes
                     )
                     score = CodeReviewer.parse_review_score(review_text=review_result)
-                    for item in changes:
-                        additions += item.get("additions", 0)
-                        deletions += item.get("deletions", 0)
+                    additions, deletions = _sum_changes(changes)
                     handler.add_push_notes(review_result)
                 except LLMRetryExhaustedError as e:
                     logger.error(
@@ -453,6 +510,7 @@ def handle_github_push_event(
                             webhook_data=webhook_data,
                             additions=additions,
                             deletions=deletions,
+                            event_id=event_id,
                         ),
                         status="failed",
                     )
@@ -473,6 +531,7 @@ def handle_github_push_event(
                 webhook_data=webhook_data,
                 additions=additions,
                 deletions=deletions,
+                event_id=event_id,
             ),
             status="success",
         )
@@ -484,7 +543,11 @@ def handle_github_push_event(
 
 
 def handle_github_pull_request_event(
-    webhook_data: dict, github_token: str, github_url: str, github_url_slug: str
+    webhook_data: dict,
+    github_token: str,
+    github_url: str,
+    github_url_slug: str,
+    event_id: int = None,
 ):
     """
     处理GitHub Pull Request 事件
@@ -509,10 +572,12 @@ def handle_github_pull_request_event(
             logger.info(
                 "Merge Request target branch not match protected branches, ignored."
             )
+            _log_skip("目标分支非受保护分支", review_type="github pr")
             return
 
         if handler.action not in ["opened", "synchronize"]:
             logger.info(f"Pull Request Hook event, action={handler.action}, ignored.")
+            _log_skip(f"action={handler.action} 非 opened/synchronize", review_type="github pr")
             return
 
         # 检查GitHub Pull Request的last_commit_id是否已经存在，如果存在则跳过处理
@@ -528,6 +593,7 @@ def handle_github_pull_request_event(
                 logger.info(
                     f"Pull Request with last_commit_id {github_last_commit_id} already exists, skipping review for {project_name}."
                 )
+                _log_skip(f"last_commit_id={github_last_commit_id} 已存在", review_type="github pr")
                 return
 
         # 仅仅在PR创建或更新时进行Code Review
@@ -539,20 +605,17 @@ def handle_github_pull_request_event(
             logger.info(
                 "未检测到有关代码的修改,修改文件可能不满足SUPPORTED_EXTENSIONS。"
             )
+            _log_skip("未检测到有效变更或文件类型不支持", review_type="github pr")
             return
 
         language = CodeReviewer.detect_primary_language_name(changes)
-        # 统计本次新增、删除的代码总数
-        additions = 0
-        deletions = 0
-        for item in changes:
-            additions += item.get("additions", 0)
-            deletions += item.get("deletions", 0)
+        additions, deletions = _sum_changes(changes)
 
         # 获取Pull Request的commits
         commits = handler.get_pull_request_commits()
         if not commits:
             logger.error("Failed to get commits")
+            _log_skip("未获取到提交记录", review_type="github pr")
             return
 
         # review 代码
@@ -592,6 +655,7 @@ def handle_github_pull_request_event(
                     additions=additions,
                     deletions=deletions,
                     last_commit_id=github_last_commit_id,
+                    event_id=event_id,
                 ),
                 status="failed",
             )
@@ -621,6 +685,7 @@ def handle_github_pull_request_event(
                 additions=additions,
                 deletions=deletions,
                 last_commit_id=github_last_commit_id,
+                event_id=event_id,
             ),
             status="success",
         )
@@ -632,7 +697,11 @@ def handle_github_pull_request_event(
 
 
 def handle_gitea_push_event(
-    webhook_data: dict, gitea_token: str, gitea_url: str, gitea_url_slug: str
+    webhook_data: dict,
+    gitea_token: str,
+    gitea_url: str,
+    gitea_url_slug: str,
+    event_id: int = None,
 ):
     push_review_enabled = os.environ.get("PUSH_REVIEW_ENABLED", "0") == "1"
     try:
@@ -641,6 +710,7 @@ def handle_gitea_push_event(
         commits = handler.get_push_commits()
         if not commits:
             logger.error("Failed to get commits")
+            _log_skip("未获取到提交记录", review_type="gitea push")
             return
 
         review_result = None
@@ -656,7 +726,10 @@ def handle_gitea_push_event(
             or sender.get("login")
             or sender.get("username")
         )
-        if push_review_enabled:
+        if not push_review_enabled:
+            _log_skip("PUSH_REVIEW_ENABLED 未开启", review_type="gitea push")
+            review_result = "AI 审查未启用"
+        else:
             changes = handler.get_push_changes()
             logger.info("changes: %s", changes)
             changes = filter_gitea_changes(changes)
@@ -664,6 +737,10 @@ def handle_gitea_push_event(
             if not changes:
                 logger.info(
                     "未检测到PUSH代码的修改,修改文件可能不满足SUPPORTED_EXTENSIONS。"
+                )
+                _log_skip(
+                    "未检测到有效变更或文件类型不支持",
+                    review_type="gitea push",
                 )
             review_result = "关注的文件没有修改"
 
@@ -676,9 +753,7 @@ def handle_gitea_push_event(
                         str(changes), commits_text, changes=changes
                     )
                     score = CodeReviewer.parse_review_score(review_text=review_result)
-                    for item in changes:
-                        additions += item.get("additions", 0)
-                        deletions += item.get("deletions", 0)
+                    additions, deletions = _sum_changes(changes)
                     handler.add_push_notes(review_result)
                 except LLMRetryExhaustedError as e:
                     logger.error(
@@ -701,6 +776,7 @@ def handle_gitea_push_event(
                             webhook_data=webhook_data,
                             additions=additions,
                             deletions=deletions,
+                            event_id=event_id,
                         ),
                         status="failed",
                     )
@@ -721,6 +797,7 @@ def handle_gitea_push_event(
                 webhook_data=webhook_data,
                 additions=additions,
                 deletions=deletions,
+                event_id=event_id,
             ),
             status="success",
         )
@@ -732,7 +809,11 @@ def handle_gitea_push_event(
 
 
 def handle_gitea_pull_request_event(
-    webhook_data: dict, gitea_token: str, gitea_url: str, gitea_url_slug: str
+    webhook_data: dict,
+    gitea_token: str,
+    gitea_url: str,
+    gitea_url_slug: str,
+    event_id: int = None,
 ):
     merge_review_only_protected_branches = (
         os.environ.get("MERGE_REVIEW_ONLY_PROTECTED_BRANCHES_ENABLED", "0") == "1"
@@ -750,6 +831,7 @@ def handle_gitea_pull_request_event(
             logger.info(
                 "Pull Request target branch not match protected branches, ignored."
             )
+            _log_skip("目标分支非受保护分支", review_type="gitea pr")
             return
 
         if handler.action not in [
@@ -760,6 +842,7 @@ def handle_gitea_pull_request_event(
             "synchronized",
         ]:
             logger.info(f"Pull Request Hook event, action={handler.action}, ignored.")
+            _log_skip(f"action={handler.action} 非允许范围", review_type="gitea pr")
             return
 
         head_info = pull_request.get("head") or {}
@@ -781,6 +864,7 @@ def handle_gitea_pull_request_event(
                 logger.info(
                     f"Pull Request with last_commit_id {last_commit_id} already exists, skipping review for {project_name}."
                 )
+                _log_skip(f"last_commit_id={last_commit_id} 已存在", review_type="gitea pr")
                 return
 
         changes = handler.get_pull_request_changes()
@@ -790,19 +874,17 @@ def handle_gitea_pull_request_event(
             logger.info(
                 "未检测到有关代码的修改,修改文件可能不满足SUPPORTED_EXTENSIONS。"
             )
+            _log_skip("未检测到有效变更或文件类型不支持", review_type="gitea pr")
             return
 
         language = CodeReviewer.detect_primary_language_name(changes)
 
-        additions = 0
-        deletions = 0
-        for item in changes:
-            additions += item.get("additions", 0)
-            deletions += item.get("deletions", 0)
+        additions, deletions = _sum_changes(changes)
 
         commits = handler.get_pull_request_commits()
         if not commits:
             logger.error("Failed to get commits for Gitea pull request")
+            _log_skip("未获取到提交记录", review_type="gitea pr")
             return
 
         commits_text = ";".join(commit.get("title", "") for commit in commits)
@@ -847,6 +929,7 @@ def handle_gitea_pull_request_event(
                     additions=additions,
                     deletions=deletions,
                     last_commit_id=last_commit_id,
+                    event_id=event_id,
                 ),
                 status="failed",
             )
@@ -883,6 +966,7 @@ def handle_gitea_pull_request_event(
                 additions=additions,
                 deletions=deletions,
                 last_commit_id=last_commit_id,
+                event_id=event_id,
             ),
             status="success",
         )

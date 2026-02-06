@@ -7,6 +7,7 @@ import fnmatch
 import requests
 
 from biz.utils.log import logger
+from biz.utils.http import request_with_retry
 
 
 def filter_changes(changes: list):
@@ -105,7 +106,9 @@ class PullRequestHandler:
         url = urljoin(f"{self.gitea_url}/", endpoint)
 
         for attempt in range(max_retries):
-            response = requests.get(url, headers=self._headers(), verify=False)
+            response = request_with_retry(
+                "GET", url, headers=self._headers(), verify=False, retries=1
+            )
             logger.debug(
                 f"Get changes response from Gitea (attempt {attempt + 1}): {response.status_code}, {response.text}, URL: {url}")
 
@@ -142,7 +145,7 @@ class PullRequestHandler:
 
         endpoint = f"api/v1/repos/{self.repo_full_name}/pulls/{self.pull_request_index}/commits"
         url = urljoin(f"{self.gitea_url}/", endpoint)
-        response = requests.get(url, headers=self._headers(), verify=False)
+        response = request_with_retry("GET", url, headers=self._headers(), verify=False)
         logger.debug(f"Get commits response from Gitea: {response.status_code}, {response.text}")
 
         if response.status_code == 200:
@@ -172,7 +175,14 @@ class PullRequestHandler:
 
         endpoint = f"api/v1/repos/{self.repo_full_name}/issues/{self.pull_request_index}/comments"
         url = urljoin(f"{self.gitea_url}/", endpoint)
-        response = requests.post(url, headers=self._headers(), json={'body': review_result}, verify=False)
+        response = request_with_retry(
+            "POST",
+            url,
+            headers=self._headers(),
+            json={"body": review_result},
+            verify=False,
+            retries=1,
+        )
         logger.debug(f"Add comment to Gitea pull request {url}: {response.status_code}, {response.text}")
 
         if response.status_code == 201:
@@ -187,7 +197,7 @@ class PullRequestHandler:
 
         endpoint = f"api/v1/repos/{self.repo_full_name}/branches?protected=true"
         url = urljoin(f"{self.gitea_url}/", endpoint)
-        response = requests.get(url, headers=self._headers(), verify=False)
+        response = request_with_retry("GET", url, headers=self._headers(), verify=False)
         logger.debug(f"Get protected branches response from Gitea: {response.status_code}, {response.text}")
 
         if response.status_code == 200:
@@ -283,7 +293,7 @@ class PushHandler:
 
         endpoint = f"api/v1/repos/{self.repo_full_name}/git/commits/{commit_id}.diff"
         url = urljoin(f"{self.gitea_url}/", endpoint)
-        response = requests.get(url, headers=self._headers(), verify=False)
+        response = request_with_retry("GET", url, headers=self._headers(), verify=False)
         logger.debug(
             f"Get commit diff from Gitea: {response.status_code}, {url}")
         if response.status_code == 200:
@@ -366,4 +376,3 @@ class PushHandler:
             diff_text = self._get_commit_diff(commit_id)
             changes.extend(self._parse_diff_to_changes(diff_text))
         return changes
-

@@ -1,8 +1,24 @@
 class MergeRequestReviewEntity:
-    def __init__(self, project_name: str, author: str, source_branch: str, target_branch: str, updated_at: int,
-                 commits: list, score: float, url: str, review_result: str, url_slug: str, webhook_data: dict,
-                 additions: int, deletions: int, last_commit_id: str, author_display_name: str = "",
-                 language: str = ""):
+    def __init__(
+        self,
+        project_name: str,
+        author: str,
+        source_branch: str,
+        target_branch: str,
+        updated_at: int,
+        commits: list,
+        score: float,
+        url: str,
+        review_result: str,
+        url_slug: str,
+        webhook_data: dict,
+        additions: int,
+        deletions: int,
+        last_commit_id: str,
+        author_display_name: str = "",
+        language: str = "",
+        event_id: int = None,
+    ):
         self.project_name = project_name
         self.author = author
         self.author_display_name = author_display_name
@@ -19,6 +35,7 @@ class MergeRequestReviewEntity:
         self.deletions = deletions
         self.last_commit_id = last_commit_id
         self.language = language
+        self.event_id = event_id
 
     @property
     def commit_messages(self):
@@ -27,9 +44,23 @@ class MergeRequestReviewEntity:
 
 
 class PushReviewEntity:
-    def __init__(self, project_name: str, author: str, branch: str, updated_at: int, commits: list, score: float,
-                 review_result: str, url_slug: str, webhook_data: dict, additions: int, deletions: int,
-                 author_display_name: str = "", language: str = ""):
+    def __init__(
+        self,
+        project_name: str,
+        author: str,
+        branch: str,
+        updated_at: int,
+        commits: list,
+        score: float,
+        review_result: str,
+        url_slug: str,
+        webhook_data: dict,
+        additions: int,
+        deletions: int,
+        author_display_name: str = "",
+        language: str = "",
+        event_id: int = None,
+    ):
         self.project_name = project_name
         self.author = author
         self.author_display_name = author_display_name
@@ -43,6 +74,7 @@ class PushReviewEntity:
         self.additions = additions
         self.deletions = deletions
         self.language = language
+        self.event_id = event_id
 
     @property
     def commit_messages(self):

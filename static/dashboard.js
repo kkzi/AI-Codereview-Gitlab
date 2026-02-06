@@ -7,14 +7,29 @@ let currentType = 'push';  // 默认选中代码推送
         let currentDetailId = null;
         let lastLlmCheckAt = 0;
 
-        function initDates() {
-            const today = new Date();
-            const weekAgo = new Date(today);
-            weekAgo.setDate(today.getDate() - 7);
+	        function initDates() {
+	            const today = new Date();
+	            const weekAgo = new Date(today);
+	            weekAgo.setDate(today.getDate() - 7);
 
-            document.getElementById('endDate').value = today.toISOString().split('T')[0];
-            document.getElementById('startDate').value = weekAgo.toISOString().split('T')[0];
-        }
+	            const endInput = document.getElementById('endDate');
+	            const startInput = document.getElementById('startDate');
+	            if (endInput) endInput.value = today.toISOString().split('T')[0];
+	            if (startInput) startInput.value = weekAgo.toISOString().split('T')[0];
+
+	            if (window.flatpickr) {
+	                window.flatpickr('#startDate', {
+	                    dateFormat: 'Y-m-d',
+	                    allowInput: true,
+	                    defaultDate: weekAgo,
+	                });
+	                window.flatpickr('#endDate', {
+	                    dateFormat: 'Y-m-d',
+	                    allowInput: true,
+	                    defaultDate: today,
+	                });
+	            }
+	        }
 
 	        function switchTab(type) {
 	            currentType = type;
@@ -95,37 +110,60 @@ let currentType = 'push';  // 默认选中代码推送
 	                const score = data.score != null ? data.score : '';
 	                const status = data.status || '';
 	                const retryCount = data.retry_count != null ? data.retry_count : '';
-	                if (meta) {
-	                    meta.textContent = `项目: ${project} | 开发者: ${author} | 时间: ${updated} | 模型: ${modelName} | 得分: ${score} | 状态: ${status} | 重试: ${retryCount}`;
+	                const projectUrl = data.project_url || '';
+	                const commitUrl = data.commit_url || '';
+	                const commitId = (data.last_commit_id || '').trim();
+	                const mrUrl = data.url || '';
+
+                if (meta) {
+                    meta.textContent = '';
+                    meta.appendChild(document.createTextNode('项目: '));
+                    if (projectUrl) {
+                        const link = document.createElement('a');
+                        link.href = projectUrl;
+                        link.target = '_blank';
+                        link.rel = 'noopener noreferrer';
+                        link.textContent = project || projectUrl;
+                        meta.appendChild(link);
+                    } else {
+                        meta.appendChild(document.createTextNode(project));
+                    }
+                    if (commitUrl) {
+                        let commitLabel = '';
+                        if (commitId) {
+                            commitLabel = commitId.slice(0, 8);
+                        } else {
+                            const raw = commitUrl.split('#')[0].split('?')[0];
+                            const parts = raw.split('/').filter(Boolean);
+                            const last = parts.length ? parts[parts.length - 1] : '';
+                            commitLabel = last ? last.slice(0, 8) : '';
+                        }
+                        if (!commitLabel) commitLabel = '提交链接';
+                        const link = document.createElement('a');
+                        link.href = commitUrl;
+	                        link.target = '_blank';
+	                        link.rel = 'noopener noreferrer';
+	                        link.textContent = commitLabel;
+	                        link.style.marginLeft = '8px';
+	                        meta.appendChild(link);
+	                    }
+	                    if (mrUrl) {
+	                        const link = document.createElement('a');
+	                        link.href = mrUrl;
+	                        link.target = '_blank';
+	                        link.rel = 'noopener noreferrer';
+	                        link.textContent = 'MR链接';
+	                        link.style.marginLeft = '8px';
+	                        meta.appendChild(link);
+	                    }
+	                    meta.appendChild(
+	                        document.createTextNode(
+	                            ` | 开发者: ${author} | 时间: ${updated} | 模型: ${modelName} | 得分: ${score} | 状态: ${status} | 重试: ${retryCount}`
+	                        )
+	                    );
 	                }
 	                if (links) {
-	                    const projectUrl = data.project_url || '';
-	                    const commitUrl = data.commit_url || '';
-	                    const mrUrl = data.url || '';
-
-	                    // Build links using DOM APIs to avoid injecting URLs into HTML.
 	                    links.innerHTML = '';
-	                    const parts = [];
-	                    const makeLink = (href, text) => {
-	                        const a = document.createElement('a');
-	                        a.href = href;
-	                        a.target = '_blank';
-	                        a.rel = 'noopener noreferrer';
-	                        a.textContent = text;
-	                        return a;
-	                    };
-
-	                    if (projectUrl) parts.push(makeLink(projectUrl, '项目'));
-	                    if (commitUrl) parts.push(makeLink(commitUrl, '提交'));
-	                    if (mrUrl) parts.push(makeLink(mrUrl, 'MR'));
-
-	                    if (parts.length) {
-	                        links.appendChild(document.createTextNode('链接: '));
-	                        parts.forEach((node, i) => {
-	                            if (i > 0) links.appendChild(document.createTextNode(' | '));
-	                            links.appendChild(node);
-	                        });
-	                    }
 	                }
 	                if (body) {
 	                    renderMarkdown(body, data.review_result || '(无审查详情)');
@@ -155,15 +193,14 @@ let currentType = 'push';  // 默认选中代码推送
 	                    const text = await res.text();
 	                    throw new Error(text && text.trim() ? text.trim() : '非 JSON 响应');
 	                }
-	                if (!res.ok) {
-	                    throw new Error(result.error || result.message || '重试失败');
-	                }
-	                alert(result.message || '已触发重试');
-	            } catch (e) {
-	                alert(`重试失败: ${e && e.message ? e.message : e}`);
-	            } finally {
-	                if (btn) btn.disabled = false;
-	            }
+                if (!res.ok) {
+                    throw new Error(result.error || result.message || '重试失败');
+                }
+            } catch (e) {
+                alert(`重试失败: ${e && e.message ? e.message : e}`);
+            } finally {
+                if (btn) btn.disabled = false;
+            }
 	        }
 
 	        function prevPage() {
@@ -473,6 +510,17 @@ let currentType = 'push';  // 默认选中代码推送
 	            setLlmStatus('unknown');
 	            loadLlmStatus();
 
+	            let filterDebounceTimer = null;
+	            const scheduleFilterLoad = () => {
+	                if (filterDebounceTimer) {
+	                    clearTimeout(filterDebounceTimer);
+	                }
+	                filterDebounceTimer = setTimeout(() => {
+	                    currentPage = 1;
+	                    loadData();
+	                }, 300);
+	            };
+
 	            const modal = document.getElementById('detailModal');
 	            if (modal) {
 	                modal.addEventListener('click', (e) => {
@@ -505,6 +553,19 @@ let currentType = 'push';  // 默认选中代码推送
 	                    loadData();
 	                });
 	            }
+
+	            const bindFilterChange = (id) => {
+	                const el = document.getElementById(id);
+	                if (!el) return;
+	                el.addEventListener('change', () => {
+	                    scheduleFilterLoad();
+	                });
+	            };
+	            bindFilterChange('startDate');
+	            bindFilterChange('endDate');
+	            bindFilterChange('authorFilter');
+	            bindFilterChange('projectFilter');
+	            bindFilterChange('languageFilter');
 
 	            const llmBtn = document.getElementById('llmModelName');
 	            if (llmBtn) {

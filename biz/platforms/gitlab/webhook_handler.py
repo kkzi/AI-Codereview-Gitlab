@@ -6,6 +6,7 @@ import fnmatch
 import requests
 
 from biz.utils.log import logger
+from biz.utils.http import request_with_retry
 
 
 def filter_changes(changes: list):
@@ -89,7 +90,9 @@ class MergeRequestHandler:
             headers = {
                 'Private-Token': self.gitlab_token
             }
-            response = requests.get(url, headers=headers, verify=False)
+            response = request_with_retry(
+                "GET", url, headers=headers, verify=False, retries=1
+            )
             logger.debug(
                 f"Get changes response from GitLab (attempt {attempt + 1}): {response.status_code}, {response.text}, URL: {url}")
 
@@ -120,7 +123,7 @@ class MergeRequestHandler:
         headers = {
             'Private-Token': self.gitlab_token
         }
-        response = requests.get(url, headers=headers, verify=False)
+        response = request_with_retry("GET", url, headers=headers, verify=False)
         logger.debug(f"Get commits response from gitlab: {response.status_code}, {response.text}")
         # 检查请求是否成功
         if response.status_code == 200:
@@ -139,7 +142,9 @@ class MergeRequestHandler:
         data = {
             'body': review_result
         }
-        response = requests.post(url, headers=headers, json=data, verify=False)
+        response = request_with_retry(
+            "POST", url, headers=headers, json=data, verify=False, retries=1
+        )
         logger.debug(f"Add notes to gitlab {url}: {response.status_code}, {response.text}")
         if response.status_code == 201:
             logger.info("Note successfully added to merge request.")
@@ -154,7 +159,7 @@ class MergeRequestHandler:
             'Private-Token': self.gitlab_token,
             'Content-Type': 'application/json'
         }
-        response = requests.get(url, headers=headers, verify=False)
+        response = request_with_retry("GET", url, headers=headers, verify=False)
         logger.debug(f"Get protected branches response from gitlab: {response.status_code}, {response.text}")
         # 检查请求是否成功
         if response.status_code == 200:
@@ -232,7 +237,9 @@ class PushHandler:
         data = {
             'note': message
         }
-        response = requests.post(url, headers=headers, json=data, verify=False)
+        response = request_with_retry(
+            "POST", url, headers=headers, json=data, verify=False, retries=1
+        )
         logger.debug(f"Add comment to commit {last_commit_id}: {response.status_code}, {response.text}")
         if response.status_code == 201:
             logger.info("Comment successfully added to push commit.")
@@ -247,7 +254,7 @@ class PushHandler:
         headers = {
             'Private-Token': self.gitlab_token
         }
-        response = requests.get(url, headers=headers, verify=False)
+        response = request_with_retry("GET", url, headers=headers, verify=False)
         logger.debug(
             f"Get commits response from GitLab for repository_commits: {response.status_code}, {response.text}, URL: {url}")
 
@@ -264,7 +271,7 @@ class PushHandler:
         headers = {
             'Private-Token': self.gitlab_token
         }
-        response = requests.get(url, headers=headers, verify=False)
+        response = request_with_retry("GET", url, headers=headers, verify=False)
         logger.debug(
             f"Get changes response from GitLab for repository_compare: {response.status_code}, {response.text}, URL: {url}")
 
@@ -281,7 +288,7 @@ class PushHandler:
         headers = {
             'Private-Token': self.gitlab_token
         }
-        response = requests.get(url, headers=headers, verify=False)
+        response = request_with_retry("GET", url, headers=headers, verify=False)
         logger.debug(
             f"Get commit diff response from GitLab: {response.status_code}, {response.text}, URL: {url}")
 

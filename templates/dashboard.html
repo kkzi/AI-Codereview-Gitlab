@@ -4,10 +4,12 @@
 
 {% block head %}
 <link rel="stylesheet" href="/static/dashboard.css">
+<link rel="stylesheet" href="/static/flatpickr.min.css">
 <script src="/static/marked.min.js" defer></script>
 <script src="/static/purify.min.js" defer></script>
 <script src="/static/review_markdown.js" defer></script>
 <script src="/static/dashboard.js" defer></script>
+<script src="/static/flatpickr.min.js" defer></script>
 {% endblock %}
 
 {% block body %}
@@ -44,11 +46,11 @@
     <div class="filters">
         <div class="filter-group">
             <label>开始日期</label>
-            <input type="date" id="startDate">
+            <input type="text" id="startDate" placeholder="YYYY-MM-DD" autocomplete="off">
         </div>
         <div class="filter-group">
             <label>结束日期</label>
-            <input type="date" id="endDate">
+            <input type="text" id="endDate" placeholder="YYYY-MM-DD" autocomplete="off">
         </div>
         <div class="filter-group">
             <label>开发者</label>
@@ -68,7 +70,6 @@
                 <option value="">全部</option>
             </select>
         </div>
-        <button class="btn" onclick="currentPage = 1; loadData();">查询</button>
         <button class="btn btn-outline" onclick="exportData()">导出</button>
     </div>
 
@@ -124,7 +125,7 @@
         </div>
         <div class="modal-body">
             <div id="detailMeta" style="margin-bottom: 12px; color: #64748b; font-size: 13px;"></div>
-            <div id="detailLinks" style="margin-bottom: 12px; font-size: 13px;"></div>
+            <div id="detailLinks" style="display: none;"></div>
             <div class="review-result" id="detailBody">加载中...</div>
         </div>
     </div>
