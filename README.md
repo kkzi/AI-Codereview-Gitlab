@@ -4,6 +4,8 @@
 
 本项目是一个基于大模型的自动化代码审查工具，帮助开发团队在代码合并或提交时，快速进行智能化的审查(Code Review)，提升代码质量和开发效率。
 
+当前版本：2.1.0
+
 ## 功能
 
 - 🚀 多模型支持
@@ -79,6 +81,8 @@ GITLAB_ACCESS_TOKEN={YOUR_GITLAB_ACCESS_TOKEN}
 docker-compose up -d
 ```
 
+默认会启动 app + worker 两个服务，确保队列任务被处理。
+
 **3. 验证部署**
 
 - 主服务验证：
@@ -122,13 +126,16 @@ pip install -r requirements.txt
 
 ```bash
 python api.py
+python worker.py
 ```
 
 服务启动后，可以访问：
 - Webhook API：`http://localhost:5001/review/webhook`
 - Dashboard：`http://localhost:5001/dashboard`（默认账号：admin/admin）
 
-备注：Docker 默认仅启动 API(5001)，Dashboard 入口为 `http://localhost:5001/dashboard`。
+如需单进程启动，可使用：`QUEUE_RUN_IN_APP=1 python api.py`。
+
+启动时会自动对账最近 7 天的 webhook 事件，发现“没有评审记录且没有 pending/running 任务”的事件会自动重新入列（可用 `RECONCILE_ON_STARTUP=0` 关闭）。
 
 ### 配置 GitLab Webhook
 
@@ -173,13 +180,7 @@ python api.py
 
 **1.如何对整个代码库进行Review?**
 
-可以通过命令行工具对整个代码库进行审查。当前功能仍在不断完善中，欢迎试用并反馈宝贵意见！具体操作如下：
-
-```bash
-python -m biz.cmd.review
-```
-
-运行后，请按照命令行中的提示进行操作即可。
+2.1.0 版本暂未提供 CLI 全量扫描，建议通过 Git 平台 webhook 触发审查。
 
 **2.其它常见问题**
 

@@ -104,7 +104,7 @@ let currentType = 'push';  // 默认选中代码推送
 	                const body = document.getElementById('detailBody');
 
 	                const project = data.project_name || '';
-	                const author = data.author || '';
+	                const author = (data.author_display_name || '').trim() || data.author || '';
 	                const updated = data.updated_at || '';
 	                const modelName = data.model_name || '';
 	                const score = data.score != null ? data.score : '';
@@ -266,39 +266,42 @@ let currentType = 'push';  // 默认选中代码推送
         }
 
         function updateFilters(filters) {
-            const authorSelect = document.getElementById('authorFilter');
-            const projectSelect = document.getElementById('projectFilter');
-            const languageSelect = document.getElementById('languageFilter');
+            const authorInput = document.getElementById('authorFilter');
+            const projectInput = document.getElementById('projectFilter');
+            const languageInput = document.getElementById('languageFilter');
+            const authorList = document.getElementById('authorOptions');
+            const projectList = document.getElementById('projectOptions');
+            const languageList = document.getElementById('languageOptions');
 
-            const currentAuthor = authorSelect.value;
-            const currentProject = projectSelect.value;
-            const currentLanguage = languageSelect ? languageSelect.value : '';
+            const currentAuthor = authorInput ? authorInput.value : '';
+            const currentProject = projectInput ? projectInput.value : '';
+            const currentLanguage = languageInput ? languageInput.value : '';
 
-            authorSelect.innerHTML = '<option value="">全部</option>';
-            projectSelect.innerHTML = '<option value="">全部</option>';
-            if (languageSelect) languageSelect.innerHTML = '<option value="">全部</option>';
+            if (authorList) authorList.innerHTML = '';
+            if (projectList) projectList.innerHTML = '';
+            if (languageList) languageList.innerHTML = '';
 
-            filters.authors.forEach(a => {
-                if (a) {
-                    authorSelect.innerHTML += `<option value="${a}">${a}</option>`;
+            (filters.authors || []).forEach(a => {
+                if (a && authorList) {
+                    authorList.innerHTML += `<option value="${a}"></option>`;
                 }
             });
 
-            filters.projects.forEach(p => {
-                if (p) {
-                    projectSelect.innerHTML += `<option value="${p}">${p}</option>`;
+            (filters.projects || []).forEach(p => {
+                if (p && projectList) {
+                    projectList.innerHTML += `<option value="${p}"></option>`;
                 }
             });
 
             (filters.languages || []).forEach(l => {
-                if (languageSelect && l) {
-                    languageSelect.innerHTML += `<option value="${l}">${l}</option>`;
+                if (l && languageList) {
+                    languageList.innerHTML += `<option value="${l}"></option>`;
                 }
             });
 
-            authorSelect.value = currentAuthor;
-            projectSelect.value = currentProject;
-            if (languageSelect) languageSelect.value = currentLanguage;
+            if (authorInput) authorInput.value = currentAuthor;
+            if (projectInput) projectInput.value = currentProject;
+            if (languageInput) languageInput.value = currentLanguage;
         }
 
         function updateStats(stats) {
@@ -554,18 +557,23 @@ let currentType = 'push';  // 默认选中代码推送
 	                });
 	            }
 
-	            const bindFilterChange = (id) => {
-	                const el = document.getElementById(id);
-	                if (!el) return;
-	                el.addEventListener('change', () => {
-	                    scheduleFilterLoad();
-	                });
-	            };
-	            bindFilterChange('startDate');
-	            bindFilterChange('endDate');
-	            bindFilterChange('authorFilter');
-	            bindFilterChange('projectFilter');
-	            bindFilterChange('languageFilter');
+            const bindFilterChange = (id, listenInput = false) => {
+                const el = document.getElementById(id);
+                if (!el) return;
+                el.addEventListener('change', () => {
+                    scheduleFilterLoad();
+                });
+                if (listenInput) {
+                    el.addEventListener('input', () => {
+                        scheduleFilterLoad();
+                    });
+                }
+            };
+            bindFilterChange('startDate');
+            bindFilterChange('endDate');
+            bindFilterChange('authorFilter', true);
+            bindFilterChange('projectFilter', true);
+            bindFilterChange('languageFilter', true);
 
 	            const llmBtn = document.getElementById('llmModelName');
 	            if (llmBtn) {

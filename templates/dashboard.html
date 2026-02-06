@@ -54,21 +54,18 @@
         </div>
         <div class="filter-group">
             <label>开发者</label>
-            <select id="authorFilter">
-                <option value="">全部</option>
-            </select>
+            <input id="authorFilter" type="text" list="authorOptions" placeholder="全部" autocomplete="off">
+            <datalist id="authorOptions"></datalist>
         </div>
         <div class="filter-group">
             <label>项目</label>
-            <select id="projectFilter">
-                <option value="">全部</option>
-            </select>
+            <input id="projectFilter" type="text" list="projectOptions" placeholder="全部" autocomplete="off">
+            <datalist id="projectOptions"></datalist>
         </div>
         <div class="filter-group">
             <label>语言</label>
-            <select id="languageFilter">
-                <option value="">全部</option>
-            </select>
+            <input id="languageFilter" type="text" list="languageOptions" placeholder="全部" autocomplete="off">
+            <datalist id="languageOptions"></datalist>
         </div>
         <button class="btn btn-outline" onclick="exportData()">导出</button>
     </div>

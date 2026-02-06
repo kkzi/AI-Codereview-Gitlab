@@ -28,7 +28,8 @@ COPY --from=builder /install /usr/local
 
 COPY conf/*.yml ./conf/
 COPY api.py ./
-COPY biz ./biz
+COPY worker.py ./
+COPY app ./app
 COPY templates ./templates
 COPY static ./static
 

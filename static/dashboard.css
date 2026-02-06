@@ -245,6 +245,18 @@
             font-family: inherit;
         }
 
+        .filter-group input[list] {
+            width: 240px;
+            appearance: none;
+            background-image: linear-gradient(45deg, transparent 50%, #94a3b8 50%),
+                linear-gradient(135deg, #94a3b8 50%, transparent 50%),
+                linear-gradient(to right, transparent, transparent);
+            background-position: calc(100% - 16px) calc(50% - 3px), calc(100% - 11px) calc(50% - 3px), 100% 0;
+            background-size: 5px 5px, 5px 5px, 2.4em 100%;
+            background-repeat: no-repeat;
+            padding-right: 30px;
+        }
+
         .filter-group input.flatpickr-input {
             background: #fff;
             border-color: #e2e8f0;

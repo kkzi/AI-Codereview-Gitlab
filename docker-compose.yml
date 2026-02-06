@@ -3,7 +3,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: ai-codereview-gitlab:2.0.0
+    image: ai-codereview-gitlab:2.1.0
     container_name: ai-codereview-app
     ports:
       - "5001:5001"
@@ -14,3 +14,19 @@ services:
     env_file:
       - ./conf/.env
     restart: unless-stopped
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ai-codereview-gitlab:2.1.0
+    container_name: ai-codereview-worker
+    command: ["python", "worker.py"]
+    volumes:
+      - ./data:/app/data
+      - ./log:/app/log
+      - ./conf:/app/conf
+    env_file:
+      - ./conf/.env
+    restart: unless-stopped
+    depends_on:
+      - app
