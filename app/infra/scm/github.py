@@ -142,6 +142,12 @@ class GitHubClient:
                 if attempt < max_retries - 1:
                     time.sleep(retry_delay)
             else:
+                logger.warning(
+                    "GitHub PR files request failed: status=%s url=%s body=%s",
+                    resp.status_code,
+                    resp.url,
+                    resp.text[:200],
+                )
                 return []
         return []
 
@@ -151,6 +157,12 @@ class GitHubClient:
         path = f"repos/{repo_full_name}/pulls/{pr_number}/commits"
         resp = self._request("GET", path)
         if resp.status_code != 200:
+            logger.warning(
+                "GitHub PR commits request failed: status=%s url=%s body=%s",
+                resp.status_code,
+                resp.url,
+                resp.text[:200],
+            )
             return []
         commits = resp.json() or []
         results: List[Dict[str, Any]] = []
@@ -184,6 +196,12 @@ class GitHubClient:
         path = f"repos/{repo_full_name}/branches?protected=true"
         resp = self._request("GET", path)
         if resp.status_code != 200:
+            logger.warning(
+                "GitHub protected branches request failed: status=%s url=%s body=%s",
+                resp.status_code,
+                resp.url,
+                resp.text[:200],
+            )
             return False
         data = resp.json() or []
         return any(self._match_branch(target_branch, item.get("name", "")) for item in data)
@@ -205,6 +223,12 @@ class GitHubClient:
         path = f"repos/{repo_full_name}/commits/{commit_id}"
         resp = self._request("GET", path)
         if resp.status_code != 200:
+            logger.warning(
+                "GitHub commit request failed: status=%s url=%s body=%s",
+                resp.status_code,
+                resp.url,
+                resp.text[:200],
+            )
             return ""
         parents = (resp.json() or {}).get("parents") or []
         if parents:
@@ -217,6 +241,12 @@ class GitHubClient:
         path = f"repos/{repo_full_name}/compare/{base}...{head}"
         resp = self._request("GET", path)
         if resp.status_code != 200:
+            logger.warning(
+                "GitHub compare request failed: status=%s url=%s body=%s",
+                resp.status_code,
+                resp.url,
+                resp.text[:200],
+            )
             return []
         files = (resp.json() or {}).get("files") or []
         diffs: List[Dict[str, Any]] = []

@@ -30,16 +30,29 @@ class AppConfig:
 
 def load_config() -> AppConfig:
     repo_root = Path(__file__).resolve().parents[2]
+
+    # 处理 Dashboard Secret Key
+    secret_key = os.getenv("DASHBOARD_SECRET_KEY")
+    env = os.getenv("APP_ENV", "development")
+
+    if not secret_key:
+        if env == "production":
+            raise ValueError(
+                "DASHBOARD_SECRET_KEY must be set in production environment. "
+                "Generate one with: python -c 'import secrets; print(secrets.token_hex(32))'"
+            )
+        # 开发环境使用随机生成的临时密钥
+        import secrets
+        secret_key = secrets.token_hex(32)
+        print(f"⚠️  Development mode: Using temporary secret key")
+
     return AppConfig(
-        env=os.getenv("APP_ENV", "development"),
+        env=env,
         server_port=int(os.getenv("SERVER_PORT", "5001")),
         templates_dir=str(repo_root / "templates"),
         static_dir=str(repo_root / "static"),
         db_file=os.getenv("DB_FILE", "data/data.db"),
-        dashboard_secret_key=os.getenv(
-            "DASHBOARD_SECRET_KEY",
-            "fac8cf149bdd616c07c1a675c4571ccacc40d7f7fe16914cfe0f9f9d966bb773",
-        ),
+        dashboard_secret_key=secret_key,
         dashboard_cookie_secure=_get_bool("DASHBOARD_COOKIE_SECURE", False),
         push_review_enabled=_get_bool("PUSH_REVIEW_ENABLED", False),
         merge_review_only_protected_branches_enabled=_get_bool(

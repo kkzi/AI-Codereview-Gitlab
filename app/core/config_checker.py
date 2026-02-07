@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import sys
+
+from app.core.config_validator import validate_config
 from app.core.llm_status import set_llm_status
 from app.core.logging import get_logger
 from app.infra.llm.config import get_llm_value
@@ -46,6 +49,22 @@ def check_llm_connectivity() -> None:
     set_llm_status(available)
 
 
-def check_config() -> None:
-    check_llm_provider()
+def check_config(strict: bool = False) -> None:
+    """检查配置
+
+    Args:
+        strict: 如果为 True，配置验证失败时将退出程序
+    """
+    # 运行全面的配置验证
+    _logger.info("开始配置验证...")
+    is_valid = validate_config()
+
+    if not is_valid:
+        if strict:
+            _logger.error("配置验证失败，程序退出")
+            sys.exit(1)
+        else:
+            _logger.warning("配置验证失败，但继续运行（非严格模式）")
+
+    # 运行 LLM 连接性检查
     check_llm_connectivity()

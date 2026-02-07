@@ -78,6 +78,23 @@ class SQLiteRepository:
                 )
                 """
             )
+
+            # 创建索引以提升查询性能
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_mr_project_name ON mr_review_log(project_name)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_mr_author ON mr_review_log(author)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_mr_status ON mr_review_log(status)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_mr_updated_at ON mr_review_log(updated_at DESC)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_mr_event_id ON mr_review_log(event_id)")
+
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_push_project_name ON push_review_log(project_name)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_push_author ON push_review_log(author)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_push_status ON push_review_log(status)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_push_updated_at ON push_review_log(updated_at DESC)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_push_event_id ON push_review_log(event_id)")
+
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_webhook_created_at ON webhook_event_log(created_at DESC)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_webhook_source ON webhook_event_log(source)")
+
             conn.commit()
 
     def insert_event(

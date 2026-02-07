@@ -6,10 +6,13 @@ import sqlite3
 import time
 from typing import Any, Dict, Optional
 
+from app.core.performance import get_monitor
+
 
 class DbQueue:
     def __init__(self, db_file: str) -> None:
         self.db_file = db_file
+        self.monitor = get_monitor()
 
     def init_db(self) -> None:
         with sqlite3.connect(self.db_file) as conn:
@@ -42,7 +45,6 @@ class DbQueue:
         *,
         job_type: str,
         payload: Dict[str, Any],
-        token: str,
         url: str,
         event_id: Optional[int] = None,
         record_id: Optional[int] = None,
@@ -53,13 +55,12 @@ class DbQueue:
             cursor.execute(
                 """
                 INSERT INTO review_job
-                    (job_type, payload, token, url, event_id, record_id, status, attempts, max_attempts, run_after, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, 'pending', 0, ?, 0, ?, ?)
+                    (job_type, payload, url, event_id, record_id, status, attempts, max_attempts, run_after, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, 'pending', 0, ?, 0, ?, ?)
                 """,
                 (
                     job_type,
                     json.dumps(payload, ensure_ascii=False),
-                    token,
                     url,
                     event_id,
                     record_id,
@@ -75,7 +76,6 @@ class DbQueue:
         self,
         *,
         payload: Dict[str, Any],
-        token: str,
         url: str,
         event_id: Optional[int] = None,
         record_id: Optional[int] = None,
@@ -83,7 +83,6 @@ class DbQueue:
         return self.enqueue_review_event(
             job_type="gitlab_review",
             payload=payload,
-            token=token,
             url=url,
             event_id=event_id,
             record_id=record_id,
@@ -93,7 +92,6 @@ class DbQueue:
         self,
         *,
         payload: Dict[str, Any],
-        token: str,
         url: str,
         event_id: Optional[int] = None,
         record_id: Optional[int] = None,
@@ -101,7 +99,6 @@ class DbQueue:
         return self.enqueue_review_event(
             job_type="github_review",
             payload=payload,
-            token=token,
             url=url,
             event_id=event_id,
             record_id=record_id,
@@ -111,7 +108,6 @@ class DbQueue:
         self,
         *,
         payload: Dict[str, Any],
-        token: str,
         url: str,
         event_id: Optional[int] = None,
         record_id: Optional[int] = None,
@@ -119,7 +115,6 @@ class DbQueue:
         return self.enqueue_review_event(
             job_type="gitea_review",
             payload=payload,
-            token=token,
             url=url,
             event_id=event_id,
             record_id=record_id,
@@ -127,50 +122,51 @@ class DbQueue:
 
     def claim_next_job(self) -> Optional[Dict[str, Any]]:
         now = int(time.time())
-        with sqlite3.connect(self.db_file) as conn:
-            conn.row_factory = sqlite3.Row
-            conn.isolation_level = None
-            cursor = conn.cursor()
-            cursor.execute("BEGIN IMMEDIATE")
-            cursor.execute(
-                """
-                SELECT id, job_type, payload, token, url, event_id, record_id, attempts, max_attempts
-                FROM review_job
-                WHERE status = 'pending' AND run_after <= ?
-                ORDER BY id ASC
-                LIMIT 1
-                """,
-                (now,),
-            )
-            row = cursor.fetchone()
-            if not row:
+        with self.monitor.measure("queue_claim_job"):
+            with sqlite3.connect(self.db_file) as conn:
+                conn.row_factory = sqlite3.Row
+                conn.isolation_level = None
+                cursor = conn.cursor()
+                cursor.execute("BEGIN IMMEDIATE")
+                _reclaim_stale_jobs_with_cursor(cursor, now)
+                cursor.execute(
+                    """
+                    SELECT id, job_type, payload, url, event_id, record_id, attempts, max_attempts
+                    FROM review_job
+                    WHERE status = 'pending' AND run_after <= ?
+                    ORDER BY id ASC
+                    LIMIT 1
+                    """,
+                    (now,),
+                )
+                row = cursor.fetchone()
+                if not row:
+                    cursor.execute("COMMIT")
+                    return None
+
+                job_id = row["id"]
+                attempts = int(row["attempts"] or 0) + 1
+                cursor.execute(
+                    """
+                    UPDATE review_job
+                    SET status = 'running', attempts = ?, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (attempts, now, job_id),
+                )
                 cursor.execute("COMMIT")
-                return None
 
-            job_id = row["id"]
-            attempts = int(row["attempts"] or 0) + 1
-            cursor.execute(
-                """
-                UPDATE review_job
-                SET status = 'running', attempts = ?, updated_at = ?
-                WHERE id = ?
-                """,
-                (attempts, now, job_id),
-            )
-            cursor.execute("COMMIT")
-
-        payload = json.loads(row["payload"]) if row["payload"] else {}
-        return {
-            "id": job_id,
-            "job_type": row["job_type"],
-            "payload": payload,
-            "token": row["token"],
-            "url": row["url"],
-            "event_id": row["event_id"],
-            "record_id": row["record_id"],
-            "attempts": attempts,
-            "max_attempts": row["max_attempts"],
-        }
+            payload = json.loads(row["payload"]) if row["payload"] else {}
+            return {
+                "id": job_id,
+                "job_type": row["job_type"],
+                "payload": payload,
+                "url": row["url"],
+                "event_id": row["event_id"],
+                "record_id": row["record_id"],
+                "attempts": attempts,
+                "max_attempts": row["max_attempts"],
+            }
 
     def mark_done(self, job_id: int) -> None:
         now = int(time.time())
@@ -211,17 +207,51 @@ class DbQueue:
     def has_active_event(self, event_id: int) -> bool:
         if not event_id:
             return False
+        lease_seconds = _get_lease_seconds()
+        now = int(time.time())
+        with sqlite3.connect(self.db_file) as conn:
+            cursor = conn.cursor()
+            if lease_seconds > 0:
+                cursor.execute(
+                    """
+                    SELECT COUNT(*) FROM review_job
+                    WHERE event_id = ?
+                      AND (
+                        status = 'pending'
+                        OR (status = 'running' AND updated_at >= ?)
+                      )
+                    """,
+                    (int(event_id), now - lease_seconds),
+                )
+            else:
+                cursor.execute(
+                    """
+                    SELECT COUNT(*) FROM review_job
+                    WHERE event_id = ? AND status IN ('pending', 'running')
+                    """,
+                    (int(event_id),),
+                )
+            count = cursor.fetchone()[0]
+            return int(count or 0) > 0
+
+    def reclaim_stale_jobs(self) -> int:
+        lease_seconds = _get_lease_seconds()
+        if lease_seconds <= 0:
+            return 0
+        now = int(time.time())
+        stale_before = now - lease_seconds
         with sqlite3.connect(self.db_file) as conn:
             cursor = conn.cursor()
             cursor.execute(
                 """
-                SELECT COUNT(*) FROM review_job
-                WHERE event_id = ? AND status IN ('pending', 'running')
+                UPDATE review_job
+                SET status = 'pending', run_after = 0, updated_at = ?
+                WHERE status = 'running' AND updated_at < ?
                 """,
-                (int(event_id),),
+                (now, stale_before),
             )
-            count = cursor.fetchone()[0]
-            return int(count or 0) > 0
+            conn.commit()
+            return int(cursor.rowcount or 0)
 
 
 def _get_max_attempts() -> int:
@@ -237,6 +267,28 @@ def _get_backoff_seconds(attempts: int) -> int:
     except Exception:
         base = 2
     return min(base * (2 ** max(attempts - 1, 0)), 60)
+
+
+def _get_lease_seconds() -> int:
+    try:
+        return int(os.getenv("JOB_LEASE_SECONDS", "600"))
+    except Exception:
+        return 600
+
+
+def _reclaim_stale_jobs_with_cursor(cursor: sqlite3.Cursor, now: int) -> None:
+    lease_seconds = _get_lease_seconds()
+    if lease_seconds <= 0:
+        return
+    stale_before = now - lease_seconds
+    cursor.execute(
+        """
+        UPDATE review_job
+        SET status = 'pending', run_after = 0, updated_at = ?
+        WHERE status = 'running' AND updated_at < ?
+        """,
+        (now, stale_before),
+    )
 
 
 def _ensure_column(cursor: sqlite3.Cursor, table: str, column: str, column_type: str) -> None:

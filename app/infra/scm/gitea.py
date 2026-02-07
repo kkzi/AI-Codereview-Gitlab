@@ -123,6 +123,12 @@ class GiteaClient:
                 if attempt < max_retries - 1:
                     time.sleep(retry_delay)
             else:
+                logger.warning(
+                    "Gitea PR files request failed: status=%s url=%s body=%s",
+                    resp.status_code,
+                    resp.url,
+                    resp.text[:200],
+                )
                 return []
         return []
 
@@ -132,6 +138,12 @@ class GiteaClient:
         path = f"api/v1/repos/{repo_full_name}/pulls/{pr_index}/commits"
         resp = self._request("GET", path)
         if resp.status_code != 200:
+            logger.warning(
+                "Gitea PR commits request failed: status=%s url=%s body=%s",
+                resp.status_code,
+                resp.url,
+                resp.text[:200],
+            )
             return []
         commits = resp.json() or []
         results: List[Dict[str, Any]] = []
@@ -165,6 +177,12 @@ class GiteaClient:
         path = f"api/v1/repos/{repo_full_name}/branches?protected=true"
         resp = self._request("GET", path)
         if resp.status_code != 200:
+            logger.warning(
+                "Gitea protected branches request failed: status=%s url=%s body=%s",
+                resp.status_code,
+                resp.url,
+                resp.text[:200],
+            )
             return False
         branches = resp.json() or []
         return any(self._match_branch(target_branch, branch.get("name", "")) for branch in branches)
@@ -187,6 +205,12 @@ class GiteaClient:
         resp = self._request("GET", path)
         if resp.status_code == 200:
             return resp.text or ""
+        logger.warning(
+            "Gitea commit diff request failed: status=%s url=%s body=%s",
+            resp.status_code,
+            resp.url,
+            resp.text[:200],
+        )
         return ""
 
     @staticmethod

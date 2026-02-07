@@ -5,7 +5,7 @@ from flask import Flask
 
 from app.api.routes import register_routes
 from app.core.config import load_config
-from app.core.logging import configure_logging
+from app.core.logging import configure_logging, get_logger
 from app.infra.db.sqlite import SQLiteRepository
 from app.infra.queue.db_queue import DbQueue
 from app.infra.queue.worker import start_worker_thread
@@ -16,6 +16,7 @@ from app.usecases.review import ReviewUseCase
 def create_app() -> Flask:
     config = load_config()
     configure_logging()
+    logger = get_logger(__name__)
     app = Flask(
         __name__,
         template_folder=config.templates_dir,
@@ -34,6 +35,9 @@ def create_app() -> Flask:
         repo.init_db()
         queue = DbQueue(config.db_file)
         queue.init_db()
+        reclaimed = queue.reclaim_stale_jobs()
+        if reclaimed:
+            logger.warning("Reclaimed %s stale jobs on startup", reclaimed)
         usecase = ReviewUseCase(repo=repo, queue=queue, config=config)
         requeue_unreviewed_events(repo, queue, days=7)
         start_worker_thread(queue, usecase.process_job)

@@ -8,12 +8,14 @@
 
 ## 功能
 
+- 🔗 多平台支持
+  - 支持 GitLab / GitHub / Gitea 的 Push 与 MR/PR 事件。
 - 🚀 多模型支持
   - 兼容 DeepSeek、ZhipuAI、OpenAI、Anthropic、通义千问 和 Ollama，想用哪个就用哪个。
+- 🧵 异步队列 + 失败重试
+  - Webhook 入队异步处理，任务失败自动重试。
 - 📢 消息即时推送
   - 审查结果一键直达 钉钉、企业微信 或 飞书，代码问题无处可藏！
-- 📅 自动化日报生成
-  - 基于 GitLab & GitHub & Gitea Commit 记录，自动整理每日开发进展，谁在摸鱼、谁在卷，一目了然 😼。
 - 📊 可视化 Dashboard
   - 集中展示所有 Code Review 记录，项目统计、开发者统计，数据说话，甩锅无门！
 - 🎭 Review Style 任你选
@@ -32,8 +34,8 @@
 
 ## 原理
 
-当用户在 GitLab 上提交代码（如 Merge Request 或 Push 操作）时，GitLab 将自动触发 webhook
-事件，调用本系统的接口。系统随后通过第三方大模型对代码进行审查，并将审查结果直接反馈到对应的 Merge Request 或 Commit 的
+当用户在 GitLab / GitHub / Gitea 上提交代码（如 Merge/Pull Request 或 Push）时，平台将触发
+webhook 调用本系统接口。系统随后通过大模型对代码进行审查，并将结果回写到对应的 MR/PR 或 Commit
 Note 中，便于团队查看和处理。
 
 ![流程图](doc/img/open/process.png)
@@ -58,21 +60,40 @@ cp conf/.env.dist conf/.env
 - 编辑 conf/.env 文件，配置以下关键参数：
 
 ```bash
-#大模型供应商配置,支持 zhipuai , openai , deepseek 和 ollama
-LLM_PROVIDER=deepseek
+#服务端口
+SERVER_PORT=5001
 
-#DeepSeek
-DEEPSEEK_API_KEY={YOUR_DEEPSEEK_API_KEY}
+#LLM 配置文件路径（默认 conf/llm.yml）
+LLM_CONFIG_PATH=conf/llm.yml
 
-#支持review的文件类型(未配置的文件类型不会被审查)
-SUPPORTED_EXTENSIONS=.java,.py,.php,.yml,.vue,.go,.c,.cpp,.h,.js,.css,.md,.sql
+#支持review的文件类型（未配置的不会审查）
+SUPPORTED_EXTENSIONS=.java,.py,.go,.js,.ts,.vue,.sql,.md
 
-#钉钉消息推送: 0不发送钉钉消息,1发送钉钉消息
+#Review 风格：professional | sarcastic | gentle | humorous
+REVIEW_STYLE=professional
+
+#Git 平台 Token（按需填写）
+GITLAB_ACCESS_TOKEN={YOUR_GITLAB_ACCESS_TOKEN}
+GITHUB_ACCESS_TOKEN={YOUR_GITHUB_ACCESS_TOKEN}
+GITEA_ACCESS_TOKEN={YOUR_GITEA_ACCESS_TOKEN}
+
+#Push Review 开关
+PUSH_REVIEW_ENABLED=1
+#仅评审合并到受保护分支的 MR/PR
+MERGE_REVIEW_ONLY_PROTECTED_BRANCHES_ENABLED=0
+
+#钉钉消息推送: 0不发送钉钉消息，1发送钉钉消息
 DINGTALK_ENABLED=0
 DINGTALK_WEBHOOK_URL={YOUR_WDINGTALK_WEBHOOK_URL}
+```
 
-#Gitlab配置
-GITLAB_ACCESS_TOKEN={YOUR_GITLAB_ACCESS_TOKEN}
+LLM 配置在 `conf/llm.yml`，示例：
+
+```yaml
+LLM_PROVIDER: openai
+OPENAI_API_KEY: sk-xxx
+OPENAI_API_MODEL: gpt-4o-mini
+OPENAI_API_BASE_URL: https://api.openai.com/v1
 ```
 
 **2. 启动服务**
@@ -86,8 +107,8 @@ docker-compose up -d
 **3. 验证部署**
 
 - 主服务验证：
-  - 访问 http://your-server-ip:5001
-  - 显示 "The code review server is running." 说明服务启动成功。
+  - 访问 http://your-server-ip:5001/health
+  - 返回 `{"status":"ok"}` 说明服务启动成功。
 - Dashboard 验证：
   - 访问 http://your-server-ip:5001/dashboard
   - 看到一个审查日志页面，说明 Dashboard 启动成功。
@@ -129,6 +150,12 @@ python api.py
 python worker.py
 ```
 
+也可以使用一键启动脚本：
+
+```bash
+./start.sh
+```
+
 服务启动后，可以访问：
 - Webhook API：`http://localhost:5001/review/webhook`
 - Dashboard：`http://localhost:5001/dashboard`（默认账号：admin/admin）
@@ -137,7 +164,11 @@ python worker.py
 
 启动时会自动对账最近 7 天的 webhook 事件，发现“没有评审记录且没有 pending/running 任务”的事件会自动重新入列（可用 `RECONCILE_ON_STARTUP=0` 关闭）。
 
-### 配置 GitLab Webhook
+### 配置 Git 平台 Webhook
+
+统一 Webhook URL：`http://your-server-ip:5001/review/webhook`
+
+#### GitLab
 
 #### 1. 创建Access Token
 
@@ -162,6 +193,21 @@ python worker.py
   - 请确保 GitLab 能够访问本系统。
   - 若内网环境受限，建议将系统部署在外网服务器上。
 
+#### GitHub
+
+- 进入 GitHub 仓库 → Settings → Webhooks → Add webhook
+- Payload URL：http://your-server-ip:5001/review/webhook
+- Content type：application/json
+- Events：勾选 Push 和 Pull request
+- Token：在 `conf/.env` 中配置 `GITHUB_ACCESS_TOKEN`（也可通过 `X-GitHub-Token` 传入）
+
+#### Gitea
+
+- 进入 Gitea 仓库 → Settings → Webhooks → Add webhook
+- URL：http://your-server-ip:5001/review/webhook
+- Events：勾选 Push 和 Pull Request
+- Token：在 `conf/.env` 中配置 `GITEA_ACCESS_TOKEN`（也可通过 `X-Gitea-Token` 传入）
+
 ### 配置消息推送
 
 #### 1.配置钉钉推送
@@ -185,17 +231,6 @@ python worker.py
 **2.其它常见问题**
 
 参见 [常见问题](doc/faq.md)
-
-### Code Review Pro 版
-
-功能更丰富的 AI Code Review 版本
-
-体验站: [https://demo.mzfuture.com](https://demo.mzfuture.com)
-
-安装说明 [Code Review Pro 版](doc/pro.md)
-
-![Dashboard](doc/img/pro/dashboard.png)
-![Member Analysis](doc/img/pro/member-analysis.png)
 
 ## 交流
 

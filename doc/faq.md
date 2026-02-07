@@ -4,7 +4,7 @@
 
 **可能原因**
 
-Docker 的文件映射机制是将宿主机的文件复制到容器内，因此宿主机文件的更新不会自动同步到容器内。
+容器环境变量只在启动时读取，修改 `conf/.env` 后需要重启容器生效。
 
 **解决方案**
 
@@ -20,7 +20,8 @@ docker rm -f <container_name>
 docker-compose up -d
 ```
 
-或参考说明文档启动容器。
+或参考说明文档启动容器。  
+说明：`conf/llm.yml` 使用 mtime 缓存机制，通常修改后可自动生效；如未生效再重启容器。
 
 ### GitLab 配置 Webhooks 时提示 "Invalid url given"
 
@@ -38,16 +39,16 @@ GitLab 默认禁止 Webhooks 访问本地网络地址。
 
 **解决方案**
 
-在项目的 .env 文件中，配置不同项目的群机器人的 Webhook 地址。
+在项目的 .env 文件中，配置不同项目或不同平台实例的 Webhook 地址。
 以 DingTalk 为例，配置如下：
 
 ```
 DINGTALK_ENABLED=1
-#项目A的群机器人的Webhook地址
+#项目A的群机器人的Webhook地址（项目名会被转为大写）
 DINGTALK_WEBHOOK_URL_PROJECT_A=https://oapi.dingtalk.com/robot/send?access_token={access_token_of_project_a}
 #项目B的群机器人的Webhook地址
 DINGTALK_WEBHOOK_URL_PROJECT_B=https://oapi.dingtalk.com/robot/send?access_token={access_token_of_project_b}
-#保留默认WEBHOOK_URL，发送日报或者其它项目将使用此URL
+#保留默认WEBHOOK_URL，未匹配的项目将使用此URL
 DINGTALK_WEBHOOK_URL=https://oapi.dingtalk.com/robot/send?access_token={access_token}
 ```
 
@@ -55,20 +56,22 @@ DINGTALK_WEBHOOK_URL=https://oapi.dingtalk.com/robot/send?access_token={access_t
 
 ### 如何让不同的Gitlab服务器的消息发送到不同的群？
 
-在项目的 .env 文件中，配置不同Gitlab服务器的群机器人的 Webhook 地址。
+在项目的 .env 文件中，配置不同实例的 Webhook 地址。当前使用 `url_slug` 作为匹配键：
+`url_slug` 为实例基址去掉协议后，将非字母数字替换为下划线，例如：
+`https://gitlab.example.com` → `gitlab_example_com`
+
 以 DingTalk 为例，配置如下：
 
 ```
 DINGTALK_ENABLED=1
 # Gitlab服务器A(http://192.168.30.164)的群机器人的Webhook地址
-DINGTALK_WEBHOOK_192_168_30_164=https://oapi.dingtalk.com/robot/send?access_token={access_token_of_gitlab_server_a}
+DINGTALK_WEBHOOK_URL_192_168_30_164=https://oapi.dingtalk.com/robot/send?access_token={access_token_of_gitlab_server_a}
 # Gitlab服务器B(http://example.gitlab.com)的群机器人的Webhook地址
-DINGTALK_WEBHOOK_example_gitlab_com=https://oapi.dingtalk.com/robot/send?access_token={access_token_of_gitlab_server_b}
+DINGTALK_WEBHOOK_URL_example_gitlab_com=https://oapi.dingtalk.com/robot/send?access_token={access_token_of_gitlab_server_b}
 ```
 
-飞书和企业微信的配置方式类似。
-
-**优先级：** 优先根据仓库名称匹配webhook地址，其次根据Gitlab服务器地址匹配webhook地址，如果都没有匹配到，则最后使用默认服务器地址
+飞书和企业微信的配置方式类似。  
+**优先级：** 先按项目名匹配，再按实例 `url_slug` 匹配，最后使用默认地址。
 
 ### docker 容器部署时，连接Ollama失败
 
@@ -78,7 +81,7 @@ DINGTALK_WEBHOOK_example_gitlab_com=https://oapi.dingtalk.com/robot/send?access_
 
 **解决方案**
 
-在.env文件中修改OLLAMA_API_BASE_URL为宿主机的IP地址或外网IP地址。同时要配置Ollama服务绑定到宿主机的IP地址（或0.0.0.0）。
+在 `conf/llm.yml` 中修改 `OLLAMA_API_BASE_URL` 为宿主机的 IP 地址或外网 IP 地址。同时要配置 Ollama 服务绑定到宿主机 IP（或 0.0.0.0）。
 
 ```
 OLLAMA_API_BASE_URL=http://127.0.0.1:11434  # 错误
@@ -117,7 +120,7 @@ OLLAMA_API_BASE_URL=http://{宿主机/外网IP地址}:11434  # 正确
 - 进入你的 GitHub 仓库 → Settings → Webhooks → Add webhook。
     - Payload URL: http://your-server-ip:5001/review/webhook（替换为你的服务器地址）
     - Content type选择application/json
-    - 在 Which events would you like to trigger this webhook? 中选择 Just the push event（或按需勾选其他事件）
+    - 在 Which events would you like to trigger this webhook? 中勾选 Push 和 Pull request
     - 点击 Add webhook 完成配置。
 
 **2.生成 GitHub Personal Access Token**
@@ -136,3 +139,11 @@ OLLAMA_API_BASE_URL=http://{宿主机/外网IP地址}:11434  # 正确
   GITHUB_ACCESS_TOKEN=your-access-token  #替换为你的Access Token
   ```
 
+### 是否支持对 Gitea 代码库的 Review？
+
+是的，支持。配置方式与 GitHub 类似：
+
+- 进入 Gitea 仓库 → Settings → Webhooks → Add webhook
+  - URL: http://your-server-ip:5001/review/webhook
+  - Events：勾选 Push 和 Pull Request
+- 在 `.env` 中配置 `GITEA_ACCESS_TOKEN`

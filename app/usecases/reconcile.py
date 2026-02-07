@@ -76,19 +76,16 @@ def requeue_unreviewed_events(
             continue
 
         source = (event.get("source") or "").strip().lower() or "gitlab"
+        if _is_draft_event(source, payload):
+            continue
 
         if source == "github":
-            token = (os.getenv("GITHUB_ACCESS_TOKEN") or "").strip()
-            if not token:
-                logger.warning("缺少 GitHub token，跳过事件: event_id=%s", event_id)
-                continue
             base_url = resolve_github_url(payload)
             if not base_url:
                 logger.warning("缺少 GitHub URL，跳过事件: event_id=%s", event_id)
                 continue
             queue.enqueue_github_event(
                 payload=payload,
-                token=token,
                 url=base_url,
                 event_id=event_id,
             )
@@ -96,34 +93,24 @@ def requeue_unreviewed_events(
             continue
 
         if source == "gitea":
-            token = (os.getenv("GITEA_ACCESS_TOKEN") or "").strip()
-            if not token:
-                logger.warning("缺少 Gitea token，跳过事件: event_id=%s", event_id)
-                continue
             base_url = resolve_gitea_url(payload)
             if not base_url:
                 logger.warning("缺少 Gitea URL，跳过事件: event_id=%s", event_id)
                 continue
             queue.enqueue_gitea_event(
                 payload=payload,
-                token=token,
                 url=base_url,
                 event_id=event_id,
             )
             enqueued += 1
             continue
 
-        token = (os.getenv("GITLAB_ACCESS_TOKEN") or "").strip()
-        if not token:
-            logger.warning("缺少 GitLab token，跳过事件: event_id=%s", event_id)
-            continue
         base_url = _resolve_gitlab_url(event, payload)
         if not base_url:
             logger.warning("缺少 GitLab URL，跳过事件: event_id=%s", event_id)
             continue
         queue.enqueue_gitlab_event(
             payload=payload,
-            token=token,
             url=base_url,
             event_id=event_id,
         )
@@ -136,3 +123,13 @@ def requeue_unreviewed_events(
             enqueued,
         )
     return enqueued
+
+
+def _is_draft_event(source: str, payload: Dict[str, Any]) -> bool:
+    if source == "gitlab":
+        object_attrs = payload.get("object_attributes") or {}
+        return bool(object_attrs.get("draft") or object_attrs.get("work_in_progress"))
+    if source in {"github", "gitea"}:
+        pull_request = payload.get("pull_request") or {}
+        return bool(pull_request.get("draft"))
+    return False

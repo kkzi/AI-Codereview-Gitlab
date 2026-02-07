@@ -121,29 +121,21 @@ class RetryUseCase:
 
         if payload and source in {"github", "gitea"}:
             if source == "github":
-                token = os.getenv("GITHUB_ACCESS_TOKEN", "")
-                if not token:
-                    return {"error": "Missing GitHub access token"}, 400
                 base_url = resolve_github_url(payload)
                 if not base_url:
                     return {"error": "Missing GitHub URL"}, 400
                 job_id = self.queue.enqueue_github_event(
                     payload=payload,
-                    token=token,
                     url=base_url,
                     event_id=event_id,
                     record_id=record_id,
                 )
             else:
-                token = os.getenv("GITEA_ACCESS_TOKEN", "")
-                if not token:
-                    return {"error": "Missing Gitea access token"}, 400
                 base_url = resolve_gitea_url(payload)
                 if not base_url:
                     return {"error": "Missing Gitea URL"}, 400
                 job_id = self.queue.enqueue_gitea_event(
                     payload=payload,
-                    token=token,
                     url=base_url,
                     event_id=event_id,
                     record_id=record_id,
@@ -161,17 +153,12 @@ class RetryUseCase:
         if not payload:
             return {"error": "Unable to rebuild payload for retry"}, 400
 
-        gitlab_token = os.getenv("GITLAB_ACCESS_TOKEN", "")
-        if not gitlab_token:
-            return {"error": "Missing GitLab access token"}, 400
-
         gitlab_url = _resolve_gitlab_url(record, payload)
         if not gitlab_url:
             return {"error": "Missing GitLab URL"}, 400
 
         job_id = self.queue.enqueue_gitlab_event(
             payload=payload,
-            token=gitlab_token,
             url=gitlab_url,
             event_id=event_id,
             record_id=record_id,

@@ -3,6 +3,7 @@ from __future__ import annotations
 import time
 from typing import Optional
 
+from app.core.performance import get_monitor
 from app.infra.llm.base import ChatClient
 from app.infra.llm.anthropic_client import AnthropicClient
 from app.infra.llm.ollama_client import OllamaClient
@@ -18,8 +19,10 @@ class LLMRetryExhaustedError(Exception):
 
 
 class RetryClientWrapper(ChatClient):
-    def __init__(self, client: ChatClient) -> None:
+    def __init__(self, client: ChatClient, provider: str) -> None:
         self.client = client
+        self.provider = provider
+        self.monitor = get_monitor()
 
     def ping(self) -> bool:
         return self.client.ping()
@@ -28,18 +31,29 @@ class RetryClientWrapper(ChatClient):
         retry_count = int(get_llm_value("LLM_RETRY_COUNT", "5"))
         last_error: Exception | None = None
 
-        for attempt in range(retry_count):
-            try:
-                return self.client.completions(messages=messages, model=model)
-            except Exception as exc:
-                last_error = exc
-                if attempt < retry_count - 1:
-                    wait_time = min(2**attempt, 16)
-                    time.sleep(wait_time)
+        with self.monitor.measure("llm_api_call", {"provider": self.provider}):
+            for attempt in range(retry_count):
+                try:
+                    result = self.client.completions(messages=messages, model=model)
 
-        raise LLMRetryExhaustedError(
-            f"LLM call failed after {retry_count} attempts: {last_error}"
-        )
+                    # 记录成功的 API 调用
+                    if attempt > 0:
+                        self.monitor.increment_counter(f"llm_retry_success_{self.provider}")
+
+                    return result
+                except Exception as exc:
+                    last_error = exc
+                    self.monitor.increment_counter(f"llm_api_error_{self.provider}")
+
+                    if attempt < retry_count - 1:
+                        wait_time = min(2**attempt, 16)
+                        time.sleep(wait_time)
+
+            # 所有重试都失败
+            self.monitor.increment_counter(f"llm_retry_exhausted_{self.provider}")
+            raise LLMRetryExhaustedError(
+                f"LLM call failed after {retry_count} attempts: {last_error}"
+            )
 
 
 def get_client(provider: Optional[str] = None) -> ChatClient:
@@ -54,7 +68,7 @@ def get_client(provider: Optional[str] = None) -> ChatClient:
     }
     if provider not in factories:
         raise ValueError(f"Unknown LLM provider: {provider}")
-    return RetryClientWrapper(factories[provider]())
+    return RetryClientWrapper(factories[provider](), provider)
 
 
 def get_model_name(provider: Optional[str] = None) -> str:

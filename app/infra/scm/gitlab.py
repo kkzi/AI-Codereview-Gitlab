@@ -156,6 +156,12 @@ class GitLabClient:
                 retries=1,
             )
             if resp.status_code != 200:
+                logger.warning(
+                    "GitLab MR changes request failed: status=%s url=%s body=%s",
+                    resp.status_code,
+                    resp.url,
+                    resp.text[:200],
+                )
                 return []
             changes = resp.json().get("changes", [])
             if changes:
@@ -171,6 +177,12 @@ class GitLabClient:
         )
         if resp.status_code == 200:
             return resp.json()
+        logger.warning(
+            "GitLab MR commits request failed: status=%s url=%s body=%s",
+            resp.status_code,
+            resp.url,
+            resp.text[:200],
+        )
         return []
 
     def add_merge_request_notes(self, project_id: int, mr_iid: int, review_result: str) -> None:
@@ -191,6 +203,12 @@ class GitLabClient:
             f"api/v4/projects/{project_id}/protected_branches",
         )
         if resp.status_code != 200:
+            logger.warning(
+                "GitLab protected branches request failed: status=%s url=%s body=%s",
+                resp.status_code,
+                resp.url,
+                resp.text[:200],
+            )
             return False
         data = resp.json() or []
         return any(fnmatch.fnmatch(target_branch, item.get("name", "")) for item in data)
@@ -202,6 +220,12 @@ class GitLabClient:
         )
         if resp.status_code == 200:
             return resp.json().get("diffs", [])
+        logger.warning(
+            "GitLab compare request failed: status=%s url=%s body=%s",
+            resp.status_code,
+            resp.url,
+            resp.text[:200],
+        )
         return []
 
     def get_commit_diff(self, project_id: int, commit_sha: str) -> List[Dict[str, Any]]:
@@ -211,6 +235,12 @@ class GitLabClient:
         )
         if resp.status_code == 200:
             return resp.json()
+        logger.warning(
+            "GitLab commit diff request failed: status=%s url=%s body=%s",
+            resp.status_code,
+            resp.url,
+            resp.text[:200],
+        )
         return []
 
     def get_push_changes(
