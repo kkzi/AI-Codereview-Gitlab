@@ -105,14 +105,32 @@
 	            color: #3b82f6;
 	        }
 
-	        .stat-chip.interactive,
-	        .stat-chip.interactive * {
-	            pointer-events: auto;
-	        }
+        .stat-chip.interactive,
+        .stat-chip.interactive * {
+            pointer-events: auto;
+        }
 
-	        .llm-chip {
-	            gap: 6px;
-	        }
+        .worker-chip {
+            cursor: pointer;
+        }
+
+        .llm-chip {
+            gap: 6px;
+        }
+
+        .mini-btn {
+            border: 1px solid #e2e8f0;
+            background: #fff;
+            color: #475569;
+            border-radius: 999px;
+            padding: 3px 8px;
+            font-size: 12px;
+            cursor: pointer;
+        }
+
+        .mini-btn:hover {
+            background: #f8fafc;
+        }
 
 	        .status-dot {
 	            width: 8px;
@@ -516,6 +534,54 @@
             color: #dc2626;
         }
 
+        .status.skipped {
+            background: #e2e8f0;
+            color: #475569;
+        }
+
+        .status.pending {
+            background: #e0f2fe;
+            color: #0369a1;
+        }
+
+        .detail-job-meta {
+            margin-bottom: 12px;
+            font-size: 12px;
+            color: #475569;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            align-items: center;
+        }
+
+        .job-status {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 999px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .job-status.pending {
+            background: #e0f2fe;
+            color: #0369a1;
+        }
+
+        .job-status.running {
+            background: #ede9fe;
+            color: #6d28d9;
+        }
+
+        .job-status.done {
+            background: #dcfce7;
+            color: #16a34a;
+        }
+
+        .job-status.failed {
+            background: #fee2e2;
+            color: #dc2626;
+        }
+
         .score {
             display: inline-block;
             padding: 3px 8px;
@@ -657,6 +723,38 @@
             background: rgba(148, 163, 184, 0.18);
             padding: 1px 4px;
             border-radius: 4px;
+        }
+
+        .toast {
+            position: fixed;
+            background: #ffffff;
+            color: #0f172a;
+            border: 1px solid #e2e8f0;
+            padding: 10px 12px;
+            border-radius: 12px;
+            box-shadow: 0 12px 30px rgba(15, 23, 42, 0.18);
+            font-size: 12px;
+            line-height: 1.4;
+            max-width: 360px;
+            opacity: 0;
+            transform: translateY(-6px);
+            transition: opacity 0.2s ease, transform 0.2s ease;
+            z-index: 2000;
+        }
+
+        .toast.show {
+            opacity: 1;
+            transform: translateY(0);
+        }
+
+        .toast.hide {
+            opacity: 0;
+            transform: translateY(-6px);
+        }
+
+        .toast-title {
+            font-weight: 600;
+            margin-bottom: 4px;
         }
 
         .delta {

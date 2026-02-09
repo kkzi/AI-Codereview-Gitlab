@@ -253,6 +253,78 @@ class DbQueue:
             conn.commit()
             return int(cursor.rowcount or 0)
 
+    def get_latest_job_for_record(self, record_id: int) -> Optional[Dict[str, Any]]:
+        if not record_id:
+            return None
+        with sqlite3.connect(self.db_file) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT id, job_type, status, attempts, max_attempts, run_after, last_error,
+                       created_at, updated_at
+                FROM review_job
+                WHERE record_id = ?
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (int(record_id),),
+            )
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def get_job_status_counts(self) -> Dict[str, int]:
+        counts = {"pending": 0, "running": 0, "done": 0, "failed": 0}
+        with sqlite3.connect(self.db_file) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT status, COUNT(*) FROM review_job
+                GROUP BY status
+                """
+            )
+            for status, count in cursor.fetchall():
+                if status in counts:
+                    counts[status] = int(count or 0)
+                else:
+                    counts[str(status)] = int(count or 0)
+        counts["total"] = sum(
+            v for k, v in counts.items() if k in {"pending", "running", "done", "failed"}
+        )
+        return counts
+
+    def get_latest_job_update(self) -> Optional[Dict[str, Any]]:
+        with sqlite3.connect(self.db_file) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT id, status, updated_at
+                FROM review_job
+                WHERE updated_at IS NOT NULL
+                ORDER BY updated_at DESC
+                LIMIT 1
+                """
+            )
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def get_latest_failed_job(self) -> Optional[Dict[str, Any]]:
+        with sqlite3.connect(self.db_file) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT id, last_error, updated_at
+                FROM review_job
+                WHERE status = 'failed'
+                ORDER BY updated_at DESC
+                LIMIT 1
+                """
+            )
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
 
 def _get_max_attempts() -> int:
     try:

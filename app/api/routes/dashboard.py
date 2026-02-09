@@ -23,6 +23,13 @@ from app.usecases.retry import RetryUseCase
 dashboard_bp = Blueprint("dashboard", __name__)
 
 
+@dashboard_bp.route("/")
+def root_redirect():
+    if session.get("logged_in"):
+        return redirect("/dashboard")
+    return redirect("/dashboard/login")
+
+
 @dashboard_bp.route("/dashboard")
 @login_required
 def dashboard_page():
@@ -225,3 +232,52 @@ def api_retry(record_id: int):
         return jsonify(payload), status_code
     except Exception as exc:
         return jsonify({"error": str(exc) or "Retry failed"}), 500
+
+
+@dashboard_bp.route("/dashboard/api/reviews/<int:record_id>/job")
+@login_required
+def api_review_job(record_id: int):
+    config = load_config()
+    queue = DbQueue(config.db_file)
+    queue.init_db()
+    job = queue.get_latest_job_for_record(record_id)
+    if not job:
+        return jsonify({"job": None})
+
+    run_after = job.get("run_after") or 0
+    job["created_at"] = format_timestamp(job.get("created_at"))
+    job["updated_at"] = format_timestamp(job.get("updated_at"))
+    if run_after:
+        job["run_after_at"] = format_timestamp(run_after)
+    return jsonify({"job": job})
+
+
+@dashboard_bp.route("/dashboard/api/worker/stats")
+@login_required
+def api_worker_stats():
+    config = load_config()
+    queue = DbQueue(config.db_file)
+    queue.init_db()
+    counts = queue.get_job_status_counts()
+    latest_update = queue.get_latest_job_update() or {}
+    latest_failed = queue.get_latest_failed_job() or {}
+
+    done = int(counts.get("done", 0) or 0)
+    failed = int(counts.get("failed", 0) or 0)
+    processed_total = done + failed
+    success_rate = round(done / processed_total, 4) if processed_total > 0 else None
+
+    return jsonify(
+        {
+            "success_rate": success_rate,
+            "queue": counts,
+            "processed": {
+                "total": processed_total,
+                "success": done,
+                "failed": failed,
+            },
+            "latest_update_at": format_timestamp(latest_update.get("updated_at")),
+            "latest_failed_at": format_timestamp(latest_failed.get("updated_at")),
+            "latest_failed_error": latest_failed.get("last_error") or "",
+        }
+    )

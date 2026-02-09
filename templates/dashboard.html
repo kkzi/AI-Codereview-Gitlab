@@ -26,13 +26,17 @@
 	        </div>
 	        <div class="banner-stats" id="stats" aria-label="统计">
 	            <span class="stat-chip" title="总记录数">总 <strong class="value" id="totalCount">0</strong></span>
-	            <span class="stat-chip success" title="成功">成功 <strong class="value" id="successCount">0</strong></span>
-	            <span class="stat-chip danger" title="失败">失败 <strong class="value" id="failedCount">0</strong></span>
-	            <span class="stat-chip info" title="平均得分">均分 <strong class="value" id="avgScore">0</strong></span>
-	            <span class="stat-chip interactive llm-chip" id="llmStatusChip" title="LLM 状态">
-	                <span class="status-dot unknown" id="llmStatusDot" aria-hidden="true"></span>
-	                <button class="model-name" id="llmModelName" type="button">{{ llm_model_name }}</button>
-	            </span>
+            <span class="stat-chip success" title="成功">成功 <strong class="value" id="successCount">0</strong></span>
+            <span class="stat-chip danger" title="失败">失败 <strong class="value" id="failedCount">0</strong></span>
+            <span class="stat-chip info" title="平均得分">均分 <strong class="value" id="avgScore">0</strong></span>
+            <span class="stat-chip interactive llm-chip" id="llmStatusChip" title="LLM 状态">
+                <span class="status-dot unknown" id="llmStatusDot" aria-hidden="true"></span>
+                <button class="model-name" id="llmModelName" type="button">{{ llm_model_name }}</button>
+            </span>
+            <span class="stat-chip interactive info worker-chip" id="workerStatsChip" title="Worker 成功率">
+                成功率 <strong class="value" id="workerSuccessRate">-</strong>
+            </span>
+            <button class="mini-btn" id="workerStatsRefresh" type="button" title="刷新 Worker 统计">刷新</button>
 	        </div>
 	    </div>
 	    <div class="header-right">
@@ -122,6 +126,7 @@
         </div>
         <div class="modal-body">
             <div id="detailMeta" style="margin-bottom: 12px; color: #64748b; font-size: 13px;"></div>
+            <div id="detailJobMeta" class="detail-job-meta" style="display: none;"></div>
             <div id="detailLinks" style="display: none;"></div>
             <div class="review-result" id="detailBody">加载中...</div>
         </div>

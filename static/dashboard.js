@@ -6,6 +6,10 @@ let currentType = 'push';  // 默认选中代码推送
         let sortOrder = 'desc';
         let currentDetailId = null;
         let lastLlmCheckAt = 0;
+        let jobStatusTimer = null;
+        let jobStatusPollToken = 0;
+        let lastWorkerStats = null;
+        let lastWorkerStatsAt = 0;
 
 	        function initDates() {
 	            const today = new Date();
@@ -65,6 +69,7 @@ let currentType = 'push';  // 默认选中代码推送
 
 	        function openDetail(recordId) {
 	            currentDetailId = recordId;
+	            stopJobStatusPolling();
 	            const modal = document.getElementById('detailModal');
 	            const title = document.getElementById('detailTitle');
 	            const meta = document.getElementById('detailMeta');
@@ -81,7 +86,9 @@ let currentType = 'push';  // 默认选中代码推送
 	            title.textContent = `审查详情 #${recordId}`;
 	            if (retryBtn) retryBtn.disabled = false;
 
+	            setJobStatusLoading();
 	            loadDetail(recordId);
+	            loadJobStatus(recordId, { poll: true, refreshOnDone: true });
 	        }
 
 	        function closeDetail() {
@@ -90,6 +97,8 @@ let currentType = 'push';  // 默认选中代码推送
 	            modal.classList.remove('open');
 	            modal.setAttribute('aria-hidden', 'true');
 	            currentDetailId = null;
+	            stopJobStatusPolling();
+	            clearJobStatus();
 	        }
 
 	        async function loadDetail(recordId) {
@@ -158,7 +167,7 @@ let currentType = 'push';  // 默认选中代码推送
 	                    }
 	                    meta.appendChild(
 	                        document.createTextNode(
-	                            ` | 开发者: ${author} | 时间: ${updated} | 模型: ${modelName} | 得分: ${score} | 状态: ${status} | 重试: ${retryCount}`
+	                            ` | 开发者: ${author} | 时间: ${updated} | 模型: ${modelName} | 得分: ${score} | 状态: ${formatReviewStatus(status)} | 重试: ${retryCount}`
 	                        )
 	                    );
 	                }
@@ -171,6 +180,149 @@ let currentType = 'push';  // 默认选中代码推送
 	            } catch (e) {
 	                const body = document.getElementById('detailBody');
 	                if (body) body.textContent = `加载失败: ${e && e.message ? e.message : e}`;
+	            }
+	        }
+
+	        const JOB_STATUS_LABELS = {
+	            pending: '排队中',
+	            running: '执行中',
+	            done: '已完成',
+	            failed: '失败'
+	        };
+
+	        function formatJobStatus(status) {
+	            if (!status) return '未知';
+	            return JOB_STATUS_LABELS[status] || status;
+	        }
+
+	        function jobStatusClass(status) {
+	            if (status === 'pending') return 'pending';
+	            if (status === 'running') return 'running';
+	            if (status === 'done') return 'done';
+	            if (status === 'failed') return 'failed';
+	            return 'pending';
+	        }
+
+	        function clearJobStatus() {
+	            const el = document.getElementById('detailJobMeta');
+	            if (!el) return;
+	            el.textContent = '';
+	            el.style.display = 'none';
+	        }
+
+	        function setJobStatusLoading(message = '后台任务: 加载中...') {
+	            const el = document.getElementById('detailJobMeta');
+	            if (!el) return;
+	            el.textContent = message;
+	            el.style.display = 'flex';
+	        }
+
+	        function renderJobStatus(job) {
+	            const el = document.getElementById('detailJobMeta');
+	            if (!el) return;
+	            if (!job) {
+	                clearJobStatus();
+	                return;
+	            }
+
+	            const status = (job.status || '').toLowerCase();
+	            el.textContent = '';
+	            el.style.display = 'flex';
+	            el.appendChild(document.createTextNode('后台任务: '));
+	            const statusSpan = document.createElement('span');
+	            statusSpan.className = `job-status ${jobStatusClass(status)}`;
+	            statusSpan.textContent = formatJobStatus(status);
+	            el.appendChild(statusSpan);
+
+	            const extra = [];
+	            const attempts = job.attempts != null ? job.attempts : '';
+	            const maxAttempts = job.max_attempts != null ? job.max_attempts : '';
+	            if (attempts !== '' && maxAttempts !== '') {
+	                extra.push(`尝试 ${attempts}/${maxAttempts}`);
+	            }
+	            if (status === 'pending' && job.run_after_at) {
+	                extra.push(`计划执行 ${job.run_after_at}`);
+	            }
+	            if (job.updated_at) {
+	                extra.push(`更新时间 ${job.updated_at}`);
+	            }
+	            if (status === 'failed' && job.last_error) {
+	                extra.push(`错误 ${truncate(job.last_error, 120)}`);
+	            }
+	            if (extra.length) {
+	                el.appendChild(document.createTextNode(' | ' + extra.join(' | ')));
+	            }
+	        }
+
+	        async function fetchJobStatus(recordId) {
+	            try {
+	                const res = await fetch(`/dashboard/api/reviews/${recordId}/job`);
+	                const result = await res.json();
+	                if (!res.ok) {
+	                    throw new Error(result.error || '加载任务状态失败');
+	                }
+	                return result.job || null;
+	            } catch (e) {
+	                return null;
+	            }
+	        }
+
+	        function stopJobStatusPolling() {
+	            if (jobStatusTimer) {
+	                clearTimeout(jobStatusTimer);
+	                jobStatusTimer = null;
+	            }
+	            jobStatusPollToken += 1;
+	        }
+
+	        async function loadJobStatus(
+	            recordId,
+	            { poll = false, refreshOnDone = false, emptyCount = 0 } = {}
+	        ) {
+	            if (!recordId || currentDetailId !== recordId) return;
+	            const token = jobStatusPollToken + 1;
+	            jobStatusPollToken = token;
+
+	            const job = await fetchJobStatus(recordId);
+	            if (jobStatusPollToken !== token) return;
+	            renderJobStatus(job);
+
+	            if (!poll || currentDetailId !== recordId) {
+	                return;
+	            }
+
+	            if (!job) {
+	                if (emptyCount < 5) {
+	                    jobStatusTimer = setTimeout(
+	                        () =>
+	                            loadJobStatus(recordId, {
+	                                poll: true,
+	                                refreshOnDone,
+	                                emptyCount: emptyCount + 1
+	                            }),
+	                        2000
+	                    );
+	                }
+	                return;
+	            }
+
+	            const status = (job.status || '').toLowerCase();
+	            if (status === 'pending' || status === 'running') {
+	                const delay = status === 'running' ? 2000 : 3000;
+	                jobStatusTimer = setTimeout(
+	                    () =>
+	                        loadJobStatus(recordId, {
+	                            poll: true,
+	                            refreshOnDone: true,
+	                            emptyCount: 0
+	                        }),
+	                    delay
+	                );
+	                return;
+	            }
+
+	            if (refreshOnDone) {
+	                loadDetail(recordId);
 	            }
 	        }
 
@@ -193,9 +345,12 @@ let currentType = 'push';  // 默认选中代码推送
 	                    const text = await res.text();
 	                    throw new Error(text && text.trim() ? text.trim() : '非 JSON 响应');
 	                }
-                if (!res.ok) {
-                    throw new Error(result.error || result.message || '重试失败');
-                }
+	                if (!res.ok) {
+	                    throw new Error(result.error || result.message || '重试失败');
+	                }
+	                stopJobStatusPolling();
+	                setJobStatusLoading('重试已提交，正在排队...');
+	                loadJobStatus(currentDetailId, { poll: true, refreshOnDone: true });
             } catch (e) {
                 alert(`重试失败: ${e && e.message ? e.message : e}`);
             } finally {
@@ -347,10 +502,30 @@ let currentType = 'push';  // 默认选中代码推送
 	            tbody.innerHTML = html;
         }
 
+	        const REVIEW_STATUS_LABELS = {
+	            success: '成功',
+	            failed: '失败',
+	            skipped: '跳过',
+	            pending: '排队中',
+	            running: '处理中'
+	        };
+
+	        function formatReviewStatus(status) {
+	            if (!status) return '';
+	            return REVIEW_STATUS_LABELS[status] || status;
+	        }
+
+	        function reviewStatusClass(status) {
+	            if (status === 'success') return 'success';
+	            if (status === 'skipped') return 'skipped';
+	            if (status === 'pending' || status === 'running') return 'pending';
+	            return 'failed';
+	        }
+
 	        function buildRowHtml(row) {
 	            const recordId = row.id;
-	            const statusClass = row.status === 'success' ? 'success' : 'failed';
-	            const statusText = row.status === 'success' ? '成功' : '失败';
+	            const statusClass = reviewStatusClass(row.status);
+	            const statusText = formatReviewStatus(row.status);
 
 	            const modelName = row.model_name || '';
 	            const language = row.language || '';
@@ -507,11 +682,121 @@ let currentType = 'push';  // 默认选中代码推送
 	            }
 	        }
 
+        function showToast(html, { duration = 4200, anchor = null } = {}) {
+            const toast = document.createElement('div');
+            toast.className = 'toast';
+            toast.innerHTML = html;
+            toast.style.visibility = 'hidden';
+            document.body.appendChild(toast);
+
+            const margin = 8;
+            const rect = anchor ? anchor.getBoundingClientRect() : null;
+            const toastWidth = toast.offsetWidth || 280;
+            const toastHeight = toast.offsetHeight || 60;
+            let top = rect ? rect.bottom + margin : margin;
+            let left = rect ? rect.left : margin;
+
+            if (rect && rect.bottom + toastHeight + margin > window.innerHeight) {
+                top = rect.top - toastHeight - margin;
+            }
+            if (left + toastWidth + margin > window.innerWidth) {
+                left = Math.max(margin, window.innerWidth - toastWidth - margin);
+            }
+            if (left < margin) left = margin;
+            if (top < margin) top = margin;
+
+            toast.style.top = `${top}px`;
+            toast.style.left = `${left}px`;
+            toast.style.visibility = 'visible';
+            requestAnimationFrame(() => toast.classList.add('show'));
+
+            setTimeout(() => {
+                toast.classList.add('hide');
+                setTimeout(() => toast.remove(), 220);
+            }, duration);
+        }
+
+	        function updateWorkerStatsChip(stats) {
+	            const el = document.getElementById('workerSuccessRate');
+	            if (!el) return;
+	            if (!stats || stats.success_rate == null) {
+	                el.textContent = '-';
+	                return;
+	            }
+	            const rate = Number(stats.success_rate);
+	            if (!Number.isFinite(rate)) {
+	                el.textContent = '-';
+	                return;
+	            }
+	            el.textContent = `${(rate * 100).toFixed(1)}%`;
+	        }
+
+	        async function loadWorkerStats({ force = false } = {}) {
+	            const now = Date.now();
+	            if (!force && lastWorkerStats && now - lastWorkerStatsAt < 5000) {
+	                return lastWorkerStats;
+	            }
+	            try {
+	                const res = await fetch('/dashboard/api/worker/stats');
+	                const result = await res.json();
+	                if (!res.ok) {
+	                    throw new Error(result.error || '加载失败');
+	                }
+	                lastWorkerStats = result || null;
+	                lastWorkerStatsAt = now;
+	                updateWorkerStatsChip(lastWorkerStats);
+	                return lastWorkerStats;
+	            } catch (e) {
+	                updateWorkerStatsChip(null);
+	                return null;
+	            }
+	        }
+
+	        function buildWorkerToast(stats) {
+	            if (!stats) {
+	                return '<div class="toast-title">Worker 统计</div><div>暂无数据</div>';
+	            }
+	            const queue = stats.queue || {};
+	            const pending = Number(queue.pending || 0);
+	            const running = Number(queue.running || 0);
+	            const done = Number(queue.done || 0);
+	            const failed = Number(queue.failed || 0);
+	            const total = Number(queue.total || pending + running + done + failed);
+	            const processed = stats.processed || {};
+	            const processedTotal = Number(
+	                processed.total != null ? processed.total : done + failed
+	            );
+	            const rate = Number(stats.success_rate);
+	            const rateText = Number.isFinite(rate) ? `${(rate * 100).toFixed(1)}%` : '暂无';
+	            const latestUpdate = stats.latest_update_at || '';
+	            const latestFailedAt = stats.latest_failed_at || '';
+	            const latestFailedError = stats.latest_failed_error || '';
+
+	            const lines = [
+	                '<div class="toast-title">Worker 统计</div>',
+	                `<div>成功率: ${rateText}</div>`,
+	                `<div>处理中: ${running} | 排队: ${pending} | 完成: ${done} | 失败: ${failed} | 总计: ${total}</div>`
+	            ];
+	            if (processedTotal > 0) {
+	                lines.push(`<div>已处理: ${processedTotal}</div>`);
+	            }
+	            if (latestUpdate) {
+	                lines.push(`<div>最近更新时间: ${latestUpdate}</div>`);
+	            }
+	            if (latestFailedAt) {
+	                const err = latestFailedError ? truncate(latestFailedError, 120) : '暂无错误信息';
+	                lines.push(`<div>最近失败: ${latestFailedAt}</div>`);
+	                lines.push(`<div>失败原因: ${err}</div>`);
+	            }
+	            return lines.join('');
+	        }
+
 	        document.addEventListener('DOMContentLoaded', () => {
 	            initDates();
 	            refreshSortIndicators();
 	            setLlmStatus('unknown');
 	            loadLlmStatus();
+	            loadWorkerStats();
 
 	            let filterDebounceTimer = null;
 	            const scheduleFilterLoad = () => {
@@ -579,6 +864,24 @@ let currentType = 'push';  // 默认选中代码推送
 	            if (llmBtn) {
 	                llmBtn.addEventListener('click', () => checkLlmAvailability());
 	            }
+
+            const workerChip = document.getElementById('workerStatsChip');
+            if (workerChip) {
+                workerChip.addEventListener('click', async () => {
+                    const stats = await loadWorkerStats({ force: true });
+                    showToast(buildWorkerToast(stats), { anchor: workerChip });
+                });
+            }
+            const workerRefresh = document.getElementById('workerStatsRefresh');
+            if (workerRefresh) {
+                workerRefresh.addEventListener('click', async () => {
+                    const stats = await loadWorkerStats({ force: true });
+                    showToast(buildWorkerToast(stats), { anchor: workerRefresh });
+                });
+            }
+	            setInterval(() => {
+	                loadWorkerStats();
+	            }, 30000);
 
 	            loadData();
 	            // auto refresh timer removed
