@@ -3,13 +3,11 @@
 {% block title %}数据查看 - AI代码审查平台{% endblock %}
 
 {% block head %}
-<link rel="stylesheet" href="/static/dashboard.css">
-<link rel="stylesheet" href="/static/flatpickr.min.css">
+<link rel="stylesheet" href="/static/dashboard.css?v=20260303">
 <script src="/static/marked.min.js" defer></script>
 <script src="/static/purify.min.js" defer></script>
 <script src="/static/review_markdown.js" defer></script>
-<script src="/static/dashboard.js" defer></script>
-<script src="/static/flatpickr.min.js" defer></script>
+<script src="/static/dashboard.js?v=20260303" defer></script>
 {% endblock %}
 
 {% block body %}
@@ -32,6 +30,7 @@
             <span class="stat-chip interactive llm-chip" id="llmStatusChip" title="LLM 状态">
                 <span class="status-dot unknown" id="llmStatusDot" aria-hidden="true"></span>
                 <button class="model-name" id="llmModelName" type="button">{{ llm_model_name }}</button>
+                <span class="llm-profile" id="llmProfileName">{{ llm_profile_name }}</span>
             </span>
             <span class="stat-chip interactive info worker-chip" id="workerStatsChip" title="Worker 成功率">
                 成功率 <strong class="value" id="workerSuccessRate">-</strong>
@@ -49,27 +48,31 @@
 
     <div class="filters">
         <div class="filter-group">
-            <label>开始日期</label>
-            <input type="text" id="startDate" placeholder="YYYY-MM-DD" autocomplete="off">
-        </div>
-        <div class="filter-group">
-            <label>结束日期</label>
-            <input type="text" id="endDate" placeholder="YYYY-MM-DD" autocomplete="off">
+            <label>时间范围</label>
+            <div class="range-options" role="group" aria-label="时间范围">
+                <button class="range-option" type="button" data-range="all">全部</button>
+                <button class="range-option" type="button" data-range="30d">最近30天</button>
+                <button class="range-option active" type="button" data-range="7d">最近7天</button>
+                <button class="range-option" type="button" data-range="today">今天</button>
+            </div>
         </div>
         <div class="filter-group">
             <label>开发者</label>
-            <input id="authorFilter" type="text" list="authorOptions" placeholder="全部" autocomplete="off">
-            <datalist id="authorOptions"></datalist>
+            <select id="authorFilter">
+                <option value="">全部</option>
+            </select>
         </div>
         <div class="filter-group">
             <label>项目</label>
-            <input id="projectFilter" type="text" list="projectOptions" placeholder="全部" autocomplete="off">
-            <datalist id="projectOptions"></datalist>
+            <select id="projectFilter">
+                <option value="">全部</option>
+            </select>
         </div>
         <div class="filter-group">
             <label>语言</label>
-            <input id="languageFilter" type="text" list="languageOptions" placeholder="全部" autocomplete="off">
-            <datalist id="languageOptions"></datalist>
+            <select id="languageFilter">
+                <option value="">全部</option>
+            </select>
         </div>
         <button class="btn btn-outline" onclick="exportData()">导出</button>
     </div>

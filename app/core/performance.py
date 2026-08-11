@@ -89,7 +89,7 @@ class PerformanceMonitor:
             labels: 标签（可选）
 
         Example:
-            with monitor.measure("llm_api_call", {"provider": "openai"}):
+            with monitor.measure("llm_api_call", {"provider": "chat"}):
                 result = llm_client.chat(...)
         """
         start_time = time.time()

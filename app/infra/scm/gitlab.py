@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import re
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Mapping, Optional
 import fnmatch
 from urllib.parse import urlparse, urljoin
 
@@ -21,7 +21,7 @@ def slugify_url(original_url: str) -> str:
     return target.rstrip("_")
 
 
-def resolve_gitlab_url(payload: Dict[str, Any], headers: Dict[str, str]) -> Optional[str]:
+def resolve_gitlab_url(payload: Dict[str, Any], headers: Mapping[str, str]) -> Optional[str]:
     gitlab_url = os.getenv("GITLAB_URL") or headers.get("X-Gitlab-Instance")
     if gitlab_url:
         return gitlab_url
@@ -37,7 +37,7 @@ def resolve_gitlab_url(payload: Dict[str, Any], headers: Dict[str, str]) -> Opti
         return None
 
 
-def resolve_gitlab_token(headers: Dict[str, str]) -> Optional[str]:
+def resolve_gitlab_token(headers: Mapping[str, str]) -> Optional[str]:
     return os.getenv("GITLAB_ACCESS_TOKEN") or headers.get("X-Gitlab-Token")
 
 

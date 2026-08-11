@@ -5,6 +5,7 @@ services:
       dockerfile: Dockerfile
     image: ai-codereview-gitlab:2.1.0
     container_name: ai-codereview-app
+    command: ["gunicorn", "-w", "2", "-b", "0.0.0.0:5001", "api:app"]
     ports:
       - "5001:5001"
     volumes:

@@ -1,11 +1,11 @@
 anthropic==0.39.0
 Flask==3.0.3
-APScheduler==3.10.4
+gunicorn>=21.2.0
 httpx[socks]
 Jinja2==3.1.4
 lizard==1.17.20
 ollama==0.4.7
-openai==1.59.3
+openai>=1.68.0
 pandas==2.2.3
 pathspec==0.12.1
 PyMySQL==1.1.1

@@ -9,22 +9,29 @@ from app.infra.llm.config import get_llm_value
 
 
 class ZhipuAIClient(ChatClient):
-    def __init__(self, api_key: Optional[str] = None) -> None:
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        model: Optional[str] = None,
+        timeout: Optional[float] = None,
+    ) -> None:
         resolved_key = api_key or (get_llm_value("ZHIPUAI_API_KEY") or "")
         if not resolved_key:
             raise ValueError("ZHIPUAI_API_KEY is required.")
 
-        try:
-            self.timeout = float(get_llm_value("LLM_TIMEOUT", "60"))
-        except Exception:
-            self.timeout = 60.0
+        if timeout is None:
+            try:
+                timeout = float(get_llm_value("LLM_TIMEOUT", "60"))
+            except Exception:
+                timeout = 60.0
+        self.timeout = float(timeout)
 
         try:
             self.client = ZhipuAI(api_key=resolved_key, timeout=self.timeout)
         except TypeError:
             self.client = ZhipuAI(api_key=resolved_key)
 
-        self.default_model = str(get_llm_value("ZHIPUAI_API_MODEL", "GLM-4-Flash"))
+        self.default_model = str(model or get_llm_value("ZHIPUAI_API_MODEL", "GLM-4-Flash"))
 
     def ping(self) -> bool:
         try:

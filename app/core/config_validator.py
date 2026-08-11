@@ -10,7 +10,7 @@ from typing import List, Optional
 from urllib.parse import urlparse
 
 from app.core.logging import get_logger
-from app.infra.llm.config import get_llm_value
+from app.infra.llm.config import get_llm_profiles, get_llm_value
 
 logger = get_logger(__name__)
 
@@ -59,35 +59,74 @@ class ConfigValidator:
 
     def _validate_llm_config(self):
         """验证 LLM 配置"""
-        provider = get_llm_value("LLM_PROVIDER")
+        profiles = get_llm_profiles()
+        if profiles:
+            self._validate_llm_profiles(profiles)
+            return
+        self.errors.append(ValidationError(
+            field="llm_profiles",
+            message="未配置 LLM Profiles。请在 conf/llm.yml 中设置 llm_profiles",
+            severity="error"
+        ))
 
-        if not provider:
+    def _validate_llm_profiles(self, profiles):
+        """验证 LLM 多配置列表"""
+        if not profiles:
             self.errors.append(ValidationError(
-                field="LLM_PROVIDER",
-                message="未配置 LLM 提供商。请在 conf/llm.yml 中设置 LLM_PROVIDER",
+                field="llm_profiles",
+                message="未配置 LLM Profiles 列表",
                 severity="error"
             ))
             return
 
-        # 验证各个提供商的配置
-        if provider == "openai":
-            self._validate_openai_config()
-        elif provider == "deepseek":
-            self._validate_deepseek_config()
-        elif provider == "anthropic":
-            self._validate_anthropic_config()
-        elif provider == "zhipuai":
-            self._validate_zhipuai_config()
-        elif provider == "qwen":
-            self._validate_qwen_config()
-        elif provider == "ollama":
-            self._validate_ollama_config()
-        else:
-            self.errors.append(ValidationError(
-                field="LLM_PROVIDER",
-                message=f"不支持的 LLM 提供商: {provider}。支持的提供商: openai, deepseek, anthropic, zhipuai, qwen, ollama",
-                severity="error"
-            ))
+        supported = {"chat", "responses", "deepseek", "anthropic", "zhipuai", "qwen", "ollama"}
+        for idx, profile in enumerate(profiles):
+            name = profile.get("name") or f"profile_{idx + 1}"
+            provider = str(profile.get("type") or "").strip().lower()
+            if not provider:
+                self.errors.append(ValidationError(
+                    field=f"llm_profiles[{idx}].type",
+                    message=f"{name} 未配置 type",
+                    severity="error"
+                ))
+                continue
+            if provider not in supported:
+                self.errors.append(ValidationError(
+                    field=f"llm_profiles[{idx}].type",
+                    message=f"{name} 不支持的 LLM 提供商: {provider}",
+                    severity="error"
+                ))
+                continue
+
+            base_url = profile.get("base_url")
+            if base_url and not self._is_valid_url(base_url):
+                self.errors.append(ValidationError(
+                    field=f"llm_profiles[{idx}].base_url",
+                    message=f"{name} 无效的 URL: {base_url}",
+                    severity="error"
+                ))
+
+            if provider == "ollama":
+                if not base_url:
+                    self.errors.append(ValidationError(
+                        field=f"llm_profiles[{idx}].base_url",
+                        message=f"{name} 未配置 Ollama API Base URL",
+                        severity="error"
+                    ))
+            else:
+                if not profile.get("key"):
+                    self.errors.append(ValidationError(
+                        field=f"llm_profiles[{idx}].key",
+                        message=f"{name} 未配置 API Key",
+                        severity="error"
+                    ))
+
+            if not profile.get("model"):
+                self.errors.append(ValidationError(
+                    field=f"llm_profiles[{idx}].model",
+                    message=f"{name} 未配置模型名称",
+                    severity="error"
+                ))
 
     def _validate_openai_config(self):
         """验证 OpenAI 配置"""

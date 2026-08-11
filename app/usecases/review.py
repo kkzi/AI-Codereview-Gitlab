@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import time
-from typing import Any, Dict, Tuple
+from typing import Any, Dict, Mapping, Tuple
 
 from app.core.config import AppConfig
 from app.core.logging import get_logger
@@ -27,7 +27,7 @@ class ReviewUseCase:
         self.config = config
 
     def handle_webhook(
-        self, payload: Dict[str, Any], headers: Dict[str, str]
+        self, payload: Dict[str, Any], headers: Mapping[str, str]
     ) -> Tuple[Dict[str, Any], int]:
         """处理webhook请求 - 路由到对应平台"""
         if headers.get("X-GitHub-Event"):
@@ -37,7 +37,7 @@ class ReviewUseCase:
         return self._handle_gitlab(payload, headers)
 
     def _handle_gitlab(
-        self, payload: Dict[str, Any], headers: Dict[str, str]
+        self, payload: Dict[str, Any], headers: Mapping[str, str]
     ) -> Tuple[Dict[str, Any], int]:
         """处理GitLab webhook"""
         object_kind = payload.get("object_kind")
@@ -80,7 +80,7 @@ class ReviewUseCase:
         }, 200
 
     def _handle_github(
-        self, payload: Dict[str, Any], headers: Dict[str, str]
+        self, payload: Dict[str, Any], headers: Mapping[str, str]
     ) -> Tuple[Dict[str, Any], int]:
         """处理GitHub webhook"""
         event_type = headers.get("X-GitHub-Event")
@@ -118,7 +118,7 @@ class ReviewUseCase:
         return {"message": "Request received, processing asynchronously", "event_id": event_id}, 200
 
     def _handle_gitea(
-        self, payload: Dict[str, Any], headers: Dict[str, str]
+        self, payload: Dict[str, Any], headers: Mapping[str, str]
     ) -> Tuple[Dict[str, Any], int]:
         """处理Gitea webhook"""
         event_type = headers.get("X-Gitea-Event")

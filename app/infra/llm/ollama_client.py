@@ -10,13 +10,20 @@ from app.infra.llm.config import get_llm_value
 
 
 class OllamaClient(ChatClient):
-    def __init__(self) -> None:
-        self.default_model = str(get_llm_value("OLLAMA_API_MODEL", "deepseek-r1-8k:14b"))
-        self.base_url = str(get_llm_value("OLLAMA_API_BASE_URL", "http://127.0.0.1:11434"))
-        try:
-            self.timeout = float(get_llm_value("LLM_TIMEOUT", "60"))
-        except Exception:
-            self.timeout = 60.0
+    def __init__(
+        self,
+        base_url: Optional[str] = None,
+        model: Optional[str] = None,
+        timeout: Optional[float] = None,
+    ) -> None:
+        self.default_model = str(model or get_llm_value("OLLAMA_API_MODEL", "deepseek-r1-8k:14b"))
+        self.base_url = str(base_url or get_llm_value("OLLAMA_API_BASE_URL", "http://127.0.0.1:11434"))
+        if timeout is None:
+            try:
+                timeout = float(get_llm_value("LLM_TIMEOUT", "60"))
+            except Exception:
+                timeout = 60.0
+        self.timeout = float(timeout)
 
         try:
             self.client = Client(host=self.base_url, timeout=self.timeout)

@@ -37,4 +37,4 @@ RUN mkdir -p log data conf
 
 EXPOSE 5001
 
-CMD ["python", "api.py"]
+CMD ["gunicorn", "-w", "2", "-b", "0.0.0.0:5001", "api:app"]

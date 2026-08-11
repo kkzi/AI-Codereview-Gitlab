@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from typing import Mapping
 from flask import Blueprint, jsonify, request
 
 from app.api.webhook_security import (
@@ -30,7 +31,8 @@ def handle_webhook():
         return jsonify({"error": "Invalid JSON"}), 400
 
     # 验证 webhook 签名
-    headers = dict(request.headers)
+    # 注意：request.headers 是大小写不敏感的 EnvironHeaders，不要转成普通 dict
+    headers = request.headers
     if not _verify_webhook_signature(request.data, headers):
         logger.warning("Webhook signature verification failed from IP: %s", request.remote_addr)
         return jsonify({"error": "Invalid webhook signature"}), 401
@@ -46,7 +48,7 @@ def handle_webhook():
     return jsonify(response), status
 
 
-def _verify_webhook_signature(payload: bytes, headers: dict) -> bool:
+def _verify_webhook_signature(payload: bytes, headers: Mapping[str, str]) -> bool:
     """
     验证 webhook 签名
 

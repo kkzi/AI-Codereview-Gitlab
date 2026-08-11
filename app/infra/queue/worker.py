@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import threading
 import time
 from typing import Callable, Dict, Optional
@@ -10,6 +11,13 @@ from app.infra.queue.db_queue import DbQueue
 
 
 logger = get_logger(__name__)
+
+
+def _get_max_poll_interval() -> float:
+    try:
+        return float(os.getenv("WORKER_MAX_POLL_INTERVAL", "30"))
+    except Exception:
+        return 30.0
 
 
 def _performance_summary_thread(interval: int = 300) -> None:
@@ -44,11 +52,18 @@ def run_worker(
         summary_thread.start()
         logger.info("Performance monitoring enabled (summary every 5 minutes)")
 
+    max_poll_interval = _get_max_poll_interval()
+    idle_streak = 0
+
     while True:
         job = queue.claim_next_job()
         if not job:
-            time.sleep(poll_interval)
+            idle_streak += 1
+            # 无任务时指数退避，减少空轮询开销
+            delay = min(poll_interval * (2 ** (idle_streak - 1)), max_poll_interval)
+            time.sleep(delay)
             continue
+        idle_streak = 0
 
         job_id = int(job["id"])
         try:

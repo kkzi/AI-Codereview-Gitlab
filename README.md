@@ -5,7 +5,7 @@
 ## 功能
 
 - 支持 GitLab / GitHub / Gitea 的 Push 与 MR/PR 事件
-- 支持 OpenAI / Anthropic / DeepSeek / 通义千问 / 智谱AI / Ollama
+- 支持 OpenAI Chat Completions / OpenAI Responses / Anthropic / DeepSeek / 通义千问 / 智谱AI / Ollama
 - 异步队列处理 + 失败重试
 - Dashboard 查看审查记录与手动重试
 
@@ -33,6 +33,20 @@ cp conf/.env.dist conf/.env
 
 - `LLM_PROVIDER`
 - 对应 Provider 的 `*_API_KEY` / `*_API_BASE_URL` / `*_API_MODEL`
+
+`conf/llm.yml` 的 `llm_profiles` 中，OpenAI 兼容 Chat Completions 使用 `type: chat`；OpenAI Responses API 使用 `type: responses`，可通过 `options.response_options` 传递 Responses API 参数，例如：
+
+```yaml
+llm_profiles:
+  - name: openai_responses
+    type: responses
+    baseurl: https://api.openai.com/v1
+    key: sk-xxx
+    model: gpt-4.1
+    options:
+      response_options:
+        store: false
+```
 
 4. 启动
 

@@ -10,16 +10,25 @@ from app.infra.llm.config import get_llm_value
 
 
 class AnthropicClient(ChatClient):
-    def __init__(self, api_key: Optional[str] = None) -> None:
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        base_url: Optional[str] = None,
+        model: Optional[str] = None,
+        timeout: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+    ) -> None:
         resolved_key = api_key or (get_llm_value("ANTHROPIC_API_KEY") or "")
         if not resolved_key:
             raise ValueError("ANTHROPIC_API_KEY is required.")
 
-        self.base_url = get_llm_value("ANTHROPIC_API_BASE_URL") or None
-        try:
-            self.timeout = float(get_llm_value("LLM_TIMEOUT", "60"))
-        except Exception:
-            self.timeout = 60.0
+        self.base_url = base_url or get_llm_value("ANTHROPIC_API_BASE_URL") or None
+        if timeout is None:
+            try:
+                timeout = float(get_llm_value("LLM_TIMEOUT", "60"))
+            except Exception:
+                timeout = 60.0
+        self.timeout = float(timeout)
 
         http_client = httpx.Client(timeout=self.timeout)
         if self.base_url:
@@ -28,8 +37,14 @@ class AnthropicClient(ChatClient):
             self.client = Anthropic(api_key=resolved_key, http_client=http_client)
 
         self.default_model = str(
-            get_llm_value("ANTHROPIC_API_MODEL", "claude-sonnet-4-5-20250929")
+            model or get_llm_value("ANTHROPIC_API_MODEL", "claude-sonnet-4-5-20250929")
         )
+        if max_tokens is None:
+            try:
+                max_tokens = int(get_llm_value("ANTHROPIC_MAX_TOKENS", "4096"))
+            except Exception:
+                max_tokens = 4096
+        self.max_tokens = int(max_tokens)
 
     def ping(self) -> bool:
         try:
@@ -57,6 +72,6 @@ class AnthropicClient(ChatClient):
             model=model or self.default_model,
             system=system_message,
             messages=anthropic_messages,
-            max_tokens=int(get_llm_value("ANTHROPIC_MAX_TOKENS", "4096")),
+            max_tokens=self.max_tokens,
         )
         return response.content[0].text

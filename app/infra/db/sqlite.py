@@ -4,13 +4,21 @@ import json
 import sqlite3
 from typing import Any, Dict, Optional
 
+from app.infra.db.pool import ConnectionPool, mark_schema_ready, schema_ready
+
 
 class SQLiteRepository:
     def __init__(self, db_file: str) -> None:
         self.db_file = db_file
+        self._pool = ConnectionPool(self.db_file)
+
+    def close(self) -> None:
+        self._pool.close()
 
     def init_db(self) -> None:
-        with sqlite3.connect(self.db_file) as conn:
+        if schema_ready(self.db_file, "review_log"):
+            return
+        with self._pool.connect() as conn:
             cursor = conn.cursor()
             cursor.execute(
                 """
@@ -96,6 +104,7 @@ class SQLiteRepository:
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_webhook_source ON webhook_event_log(source)")
 
             conn.commit()
+        mark_schema_ready(self.db_file, "review_log")
 
     def insert_event(
         self,
@@ -109,7 +118,7 @@ class SQLiteRepository:
         payload: Dict[str, Any],
     ) -> Optional[int]:
         try:
-            with sqlite3.connect(self.db_file) as conn:
+            with self._pool.connect() as conn:
                 cursor = conn.cursor()
                 cursor.execute(
                     """
@@ -155,7 +164,7 @@ class SQLiteRepository:
         commit_url: str,
         event_id: int | None,
     ) -> None:
-        with sqlite3.connect(self.db_file) as conn:
+        with self._pool.connect() as conn:
             cursor = conn.cursor()
             cursor.execute(
                 """
@@ -210,7 +219,7 @@ class SQLiteRepository:
         commit_url: str,
         event_id: int | None,
     ) -> None:
-        with sqlite3.connect(self.db_file) as conn:
+        with self._pool.connect() as conn:
             cursor = conn.cursor()
             cursor.execute(
                 """
@@ -252,7 +261,7 @@ class SQLiteRepository:
         language: str,
         model_name: str,
     ) -> bool:
-        with sqlite3.connect(self.db_file) as conn:
+        with self._pool.connect() as conn:
             cursor = conn.cursor()
             cursor.execute(
                 """
@@ -282,7 +291,7 @@ class SQLiteRepository:
         language: str,
         model_name: str,
     ) -> bool:
-        with sqlite3.connect(self.db_file) as conn:
+        with self._pool.connect() as conn:
             cursor = conn.cursor()
             cursor.execute(
                 """
@@ -307,7 +316,7 @@ class SQLiteRepository:
     ) -> bool:
         if not project_name or not source_branch or not target_branch or not last_commit_id:
             return False
-        with sqlite3.connect(self.db_file) as conn:
+        with self._pool.connect() as conn:
             cursor = conn.cursor()
             cursor.execute(
                 """
@@ -321,7 +330,7 @@ class SQLiteRepository:
 
     def get_review_by_id(self, data_type: str, record_id: int) -> Optional[Dict[str, Any]]:
         table = "push_review_log" if data_type == "push" else "mr_review_log"
-        with sqlite3.connect(self.db_file) as conn:
+        with self._pool.connect() as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             cursor.execute(f"SELECT * FROM {table} WHERE id = ?", (record_id,))
@@ -329,7 +338,7 @@ class SQLiteRepository:
             return dict(row) if row else None
 
     def get_event_by_id(self, event_id: int) -> Optional[Dict[str, Any]]:
-        with sqlite3.connect(self.db_file) as conn:
+        with self._pool.connect() as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             cursor.execute("SELECT * FROM webhook_event_log WHERE id = ?", (event_id,))
@@ -347,7 +356,7 @@ class SQLiteRepository:
 
     def get_unreviewed_events_since(self, since_ts: int) -> list[Dict[str, Any]]:
         results: list[Dict[str, Any]] = []
-        with sqlite3.connect(self.db_file) as conn:
+        with self._pool.connect() as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             for review_type, table in (("mr", "mr_review_log"), ("push", "push_review_log")):
@@ -395,7 +404,7 @@ class SQLiteRepository:
         limit = page_size
         offset = (page - 1) * page_size
 
-        with sqlite3.connect(self.db_file) as conn:
+        with self._pool.connect() as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             resolved_authors = authors

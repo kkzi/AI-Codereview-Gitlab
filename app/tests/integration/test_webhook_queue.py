@@ -60,6 +60,9 @@ class TestWebhookIntegration(unittest.TestCase):
                 "name": "test-project",
                 "web_url": "https://gitlab.example.com/test/project"
             },
+            "repository": {
+                "homepage": "https://gitlab.example.com/test/project"
+            },
             "object_attributes": {
                 "iid": 1,
                 "title": "Test MR",
@@ -138,12 +141,13 @@ class TestWebhookIntegration(unittest.TestCase):
         }
 
         # 发送 webhook 请求
-        response = self.client.post(
-            '/review/webhook',
-            data=json.dumps(payload),
-            content_type='application/json',
-            headers={'X-GitHub-Event': 'pull_request'}
-        )
+        with patch.dict(os.environ, {"GITHUB_ACCESS_TOKEN": "test-token"}):
+            response = self.client.post(
+                '/review/webhook',
+                data=json.dumps(payload),
+                content_type='application/json',
+                headers={'X-GitHub-Event': 'pull_request'}
+            )
 
         # 验证响应
         self.assertEqual(response.status_code, 200)

@@ -8,32 +8,46 @@ let currentType = 'push';  // 默认选中代码推送
         let lastLlmCheckAt = 0;
         let jobStatusTimer = null;
         let jobStatusPollToken = 0;
-        let lastWorkerStats = null;
-        let lastWorkerStatsAt = 0;
+let lastWorkerStats = null;
+let lastWorkerStatsAt = 0;
+let currentRange = '7d';
 
-	        function initDates() {
-	            const today = new Date();
-	            const weekAgo = new Date(today);
-	            weekAgo.setDate(today.getDate() - 7);
+        function formatDate(date) {
+            const y = date.getFullYear();
+            const m = String(date.getMonth() + 1).padStart(2, '0');
+            const d = String(date.getDate()).padStart(2, '0');
+            return `${y}-${m}-${d}`;
+        }
 
-	            const endInput = document.getElementById('endDate');
-	            const startInput = document.getElementById('startDate');
-	            if (endInput) endInput.value = today.toISOString().split('T')[0];
-	            if (startInput) startInput.value = weekAgo.toISOString().split('T')[0];
+        function setActiveRange(range, options = {}) {
+            const { triggerLoad = true } = options;
+            currentRange = range;
+            document.querySelectorAll('.range-option').forEach(btn => {
+                btn.classList.toggle('active', btn.dataset.range === range);
+            });
+            if (triggerLoad) {
+                currentPage = 1;
+                loadData();
+            }
+        }
 
-	            if (window.flatpickr) {
-	                window.flatpickr('#startDate', {
-	                    dateFormat: 'Y-m-d',
-	                    allowInput: true,
-	                    defaultDate: weekAgo,
-	                });
-	                window.flatpickr('#endDate', {
-	                    dateFormat: 'Y-m-d',
-	                    allowInput: true,
-	                    defaultDate: today,
-	                });
-	            }
-	        }
+        function getDateRangeParams() {
+            const today = new Date();
+            if (currentRange === 'all') {
+                return { startDate: '', endDate: '' };
+            }
+            if (currentRange === 'today') {
+                const d = formatDate(today);
+                return { startDate: d, endDate: d };
+            }
+            if (currentRange === '7d' || currentRange === '30d') {
+                const days = currentRange === '7d' ? 7 : 30;
+                const start = new Date(today);
+                start.setDate(today.getDate() - (days - 1));
+                return { startDate: formatDate(start), endDate: formatDate(today) };
+            }
+            return { startDate: '', endDate: '' };
+        }
 
 	        function switchTab(type) {
 	            currentType = type;
@@ -373,12 +387,11 @@ let currentType = 'push';  // 默认选中代码推送
 	            loadData();
 	        }
 
-	        async function loadData() {
-	            const startDate = document.getElementById('startDate').value;
-	            const endDate = document.getElementById('endDate').value;
-	            const author = document.getElementById('authorFilter').value;
-	            const project = document.getElementById('projectFilter').value;
-	            const language = (document.getElementById('languageFilter') || {}).value || '';
+        async function loadData() {
+            const { startDate, endDate } = getDateRangeParams();
+            const author = document.getElementById('authorFilter').value;
+            const project = document.getElementById('projectFilter').value;
+            const language = (document.getElementById('languageFilter') || {}).value || '';
 
 	            document.getElementById('loading').style.display = 'block';
 	            document.getElementById('empty').style.display = 'none';
@@ -388,14 +401,14 @@ let currentType = 'push';  // 默认选中代码推送
             try {
 	                const params = new URLSearchParams({
 	                    type: currentType,
-	                    start_date: startDate,
-	                    end_date: endDate,
 	                    page: String(currentPage),
 	                    page_size: String(pageSize),
 	                    sort: sortField,
 	                    order: sortOrder
 	                });
 
+                if (startDate) params.append('start_date', startDate);
+                if (endDate) params.append('end_date', endDate);
                 if (author) params.append('author', author);
                 if (project) params.append('project', project);
                 if (language) params.append('language', language);
@@ -408,10 +421,10 @@ let currentType = 'push';  // 默认选中代码推送
                     return;
                 }
 
-	                updateFilters(result.filters);
-	                updateStats(result.stats);
-	                updatePagination(result.pagination);
-	                renderTable(result.data);
+                updateFilters(result.filters);
+                updateStats(result.stats);
+                updatePagination(result.pagination);
+                renderTable(result.data);
             } catch (error) {
                 console.error('Error loading data:', error);
                 alert('加载数据失败');
@@ -424,39 +437,67 @@ let currentType = 'push';  // 默认选中代码推送
             const authorInput = document.getElementById('authorFilter');
             const projectInput = document.getElementById('projectFilter');
             const languageInput = document.getElementById('languageFilter');
-            const authorList = document.getElementById('authorOptions');
-            const projectList = document.getElementById('projectOptions');
-            const languageList = document.getElementById('languageOptions');
 
             const currentAuthor = authorInput ? authorInput.value : '';
             const currentProject = projectInput ? projectInput.value : '';
             const currentLanguage = languageInput ? languageInput.value : '';
 
-            if (authorList) authorList.innerHTML = '';
-            if (projectList) projectList.innerHTML = '';
-            if (languageList) languageList.innerHTML = '';
-
-            (filters.authors || []).forEach(a => {
-                if (a && authorList) {
-                    authorList.innerHTML += `<option value="${a}"></option>`;
+            const fillSelect = (selectEl, items, currentValue) => {
+                if (!selectEl) return;
+                const fragment = document.createDocumentFragment();
+                const emptyOption = document.createElement('option');
+                emptyOption.value = '';
+                emptyOption.textContent = '全部';
+                fragment.appendChild(emptyOption);
+                const seen = new Set();
+                (items || []).forEach(item => {
+                    if (!item || seen.has(item)) return;
+                    seen.add(item);
+                    const option = document.createElement('option');
+                    option.value = item;
+                    option.textContent = item;
+                    fragment.appendChild(option);
+                });
+                if (currentValue && !seen.has(currentValue)) {
+                    const option = document.createElement('option');
+                    option.value = currentValue;
+                    option.textContent = currentValue;
+                    fragment.appendChild(option);
                 }
-            });
+                selectEl.innerHTML = '';
+                selectEl.appendChild(fragment);
+                selectEl.value = currentValue || '';
+            };
 
-            (filters.projects || []).forEach(p => {
-                if (p && projectList) {
-                    projectList.innerHTML += `<option value="${p}"></option>`;
-                }
-            });
+            const fillDatalist = (listEl, items) => {
+                if (!listEl) return;
+                listEl.innerHTML = '';
+                (items || []).forEach(item => {
+                    if (!item) return;
+                    listEl.innerHTML += `<option value="${item}"></option>`;
+                });
+            };
 
-            (filters.languages || []).forEach(l => {
-                if (l && languageList) {
-                    languageList.innerHTML += `<option value="${l}"></option>`;
-                }
-            });
+            if (authorInput && authorInput.tagName === 'SELECT') {
+                fillSelect(authorInput, (filters && filters.authors) || [], currentAuthor);
+            } else {
+                fillDatalist(document.getElementById('authorOptions'), (filters && filters.authors) || []);
+                if (authorInput) authorInput.value = currentAuthor;
+            }
 
-            if (authorInput) authorInput.value = currentAuthor;
-            if (projectInput) projectInput.value = currentProject;
-            if (languageInput) languageInput.value = currentLanguage;
+            if (projectInput && projectInput.tagName === 'SELECT') {
+                fillSelect(projectInput, (filters && filters.projects) || [], currentProject);
+            } else {
+                fillDatalist(document.getElementById('projectOptions'), (filters && filters.projects) || []);
+                if (projectInput) projectInput.value = currentProject;
+            }
+
+            if (languageInput && languageInput.tagName === 'SELECT') {
+                fillSelect(languageInput, (filters && filters.languages) || [], currentLanguage);
+            } else {
+                fillDatalist(document.getElementById('languageOptions'), (filters && filters.languages) || []);
+                if (languageInput) languageInput.value = currentLanguage;
+            }
         }
 
         function updateStats(stats) {
@@ -608,8 +649,7 @@ let currentType = 'push';  // 默认选中代码推送
 
         function exportData() {
             // Server-side export: avoids exporting only the current page or stale cached data.
-            const startDate = document.getElementById('startDate').value;
-            const endDate = document.getElementById('endDate').value;
+            const { startDate, endDate } = getDateRangeParams();
             const author = document.getElementById('authorFilter').value;
             const project = document.getElementById('projectFilter').value;
 
@@ -649,14 +689,18 @@ let currentType = 'push';  // 默认选中代码推送
 	                    throw new Error(result.error || '检测失败');
 	                }
 	                setLlmStatus(result.available ? 'ok' : 'bad');
-	                if (nameBtn && result.model_name) {
-	                    nameBtn.textContent = result.model_name;
-	                }
-	            } catch (e) {
-	                setLlmStatus('bad');
-	            } finally {
-	                if (nameBtn) nameBtn.disabled = false;
-	            }
+                if (nameBtn && result.model_name) {
+                    nameBtn.textContent = result.model_name;
+                }
+                const profileEl = document.getElementById('llmProfileName');
+                if (profileEl) {
+                    profileEl.textContent = result.profile_name || result.profile_type || '';
+                }
+            } catch (e) {
+                setLlmStatus('bad');
+            } finally {
+                if (nameBtn) nameBtn.disabled = false;
+            }
 	        }
 
 	        async function loadLlmStatus() {
@@ -673,14 +717,18 @@ let currentType = 'push';  // 默认选中代码推送
 	                } else {
 	                    setLlmStatus('unknown');
 	                }
-	                const nameBtn = document.getElementById('llmModelName');
-	                if (nameBtn && result.model_name) {
-	                    nameBtn.textContent = result.model_name;
-	                }
-	            } catch (e) {
-	                setLlmStatus('unknown');
-	            }
-	        }
+                const nameBtn = document.getElementById('llmModelName');
+                if (nameBtn && result.model_name) {
+                    nameBtn.textContent = result.model_name;
+                }
+                const profileEl = document.getElementById('llmProfileName');
+                if (profileEl) {
+                    profileEl.textContent = result.profile_name || result.profile_type || '';
+                }
+            } catch (e) {
+                setLlmStatus('unknown');
+            }
+        }
 
         function showToast(html, { duration = 4200, anchor = null } = {}) {
             const toast = document.createElement('div');
@@ -792,7 +840,7 @@ let currentType = 'push';  // 默认选中代码推送
 	        }
 
 	        document.addEventListener('DOMContentLoaded', () => {
-	            initDates();
+                setActiveRange('7d', { triggerLoad: false });
 	            refreshSortIndicators();
 	            setLlmStatus('unknown');
 	            loadLlmStatus();
@@ -842,23 +890,28 @@ let currentType = 'push';  // 默认选中代码推送
 	                });
 	            }
 
-            const bindFilterChange = (id, listenInput = false) => {
+            const bindFilterChange = (id) => {
                 const el = document.getElementById(id);
                 if (!el) return;
                 el.addEventListener('change', () => {
                     scheduleFilterLoad();
                 });
-                if (listenInput) {
+                if (el.tagName === 'INPUT') {
                     el.addEventListener('input', () => {
                         scheduleFilterLoad();
                     });
                 }
             };
-            bindFilterChange('startDate');
-            bindFilterChange('endDate');
-            bindFilterChange('authorFilter', true);
-            bindFilterChange('projectFilter', true);
-            bindFilterChange('languageFilter', true);
+            bindFilterChange('authorFilter');
+            bindFilterChange('projectFilter');
+            bindFilterChange('languageFilter');
+
+            document.querySelectorAll('.range-option').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const range = btn.dataset.range || '7d';
+                    setActiveRange(range);
+                });
+            });
 
 	            const llmBtn = document.getElementById('llmModelName');
 	            if (llmBtn) {

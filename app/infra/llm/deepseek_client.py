@@ -9,25 +9,35 @@ from app.infra.llm.config import get_llm_value
 
 
 class DeepSeekClient(ChatClient):
-    def __init__(self, api_key: Optional[str] = None) -> None:
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        base_url: Optional[str] = None,
+        model: Optional[str] = None,
+        timeout: Optional[float] = None,
+        extra_body: Optional[Dict[str, object]] = None,
+    ) -> None:
         resolved_key = api_key or (get_llm_value("DEEPSEEK_API_KEY") or "")
         if not resolved_key:
             raise ValueError("DEEPSEEK_API_KEY is required.")
 
         self.base_url = str(
-            get_llm_value("DEEPSEEK_API_BASE_URL", "https://api.deepseek.com")
+            base_url or get_llm_value("DEEPSEEK_API_BASE_URL", "https://api.deepseek.com")
         )
-        try:
-            self.timeout = float(get_llm_value("LLM_TIMEOUT", "60"))
-        except Exception:
-            self.timeout = 60.0
+        if timeout is None:
+            try:
+                timeout = float(get_llm_value("LLM_TIMEOUT", "60"))
+            except Exception:
+                timeout = 60.0
+        self.timeout = float(timeout)
 
         try:
             self.client = OpenAI(api_key=resolved_key, base_url=self.base_url, timeout=self.timeout)
         except TypeError:
             self.client = OpenAI(api_key=resolved_key, base_url=self.base_url)
 
-        self.default_model = str(get_llm_value("DEEPSEEK_API_MODEL", "deepseek-chat"))
+        self.default_model = str(model or get_llm_value("DEEPSEEK_API_MODEL", "deepseek-chat"))
+        self.extra_body = extra_body or None
 
     def ping(self) -> bool:
         try:
@@ -41,8 +51,13 @@ class DeepSeekClient(ChatClient):
         messages: List[Dict[str, str]],
         model: Optional[str] = None,
     ) -> str:
+        kwargs: Dict[str, object] = {}
+        if self.extra_body:
+            kwargs["extra_body"] = self.extra_body
+
         completion = self.client.chat.completions.create(
             model=model or self.default_model,
             messages=messages,
+            **kwargs,
         )
         return completion.choices[0].message.content

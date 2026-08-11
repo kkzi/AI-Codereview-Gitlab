@@ -7,15 +7,23 @@ import time
 from typing import Any, Dict, Optional
 
 from app.core.performance import get_monitor
+from app.infra.db.pool import ConnectionPool, mark_schema_ready, schema_ready
 
 
 class DbQueue:
     def __init__(self, db_file: str) -> None:
         self.db_file = db_file
         self.monitor = get_monitor()
+        self._pool = ConnectionPool(self.db_file)
+        self._last_reclaim_ts: float = 0.0
+
+    def close(self) -> None:
+        self._pool.close()
 
     def init_db(self) -> None:
-        with sqlite3.connect(self.db_file) as conn:
+        if schema_ready(self.db_file, "queue"):
+            return
+        with self._pool.connect() as conn:
             cursor = conn.cursor()
             cursor.execute(
                 """
@@ -39,6 +47,7 @@ class DbQueue:
             )
             _ensure_column(cursor, "review_job", "record_id", "INTEGER")
             conn.commit()
+        mark_schema_ready(self.db_file, "queue")
 
     def enqueue_review_event(
         self,
@@ -50,7 +59,7 @@ class DbQueue:
         record_id: Optional[int] = None,
     ) -> int:
         now = int(time.time())
-        with sqlite3.connect(self.db_file) as conn:
+        with self._pool.connect() as conn:
             cursor = conn.cursor()
             cursor.execute(
                 """
@@ -123,12 +132,14 @@ class DbQueue:
     def claim_next_job(self) -> Optional[Dict[str, Any]]:
         now = int(time.time())
         with self.monitor.measure("queue_claim_job"):
-            with sqlite3.connect(self.db_file) as conn:
+            with self._pool.connect() as conn:
                 conn.row_factory = sqlite3.Row
                 conn.isolation_level = None
                 cursor = conn.cursor()
                 cursor.execute("BEGIN IMMEDIATE")
-                _reclaim_stale_jobs_with_cursor(cursor, now)
+                if time.time() - self._last_reclaim_ts >= _get_reclaim_interval():
+                    _reclaim_stale_jobs_with_cursor(cursor, now)
+                    self._last_reclaim_ts = time.time()
                 cursor.execute(
                     """
                     SELECT id, job_type, payload, url, event_id, record_id, attempts, max_attempts
@@ -170,7 +181,7 @@ class DbQueue:
 
     def mark_done(self, job_id: int) -> None:
         now = int(time.time())
-        with sqlite3.connect(self.db_file) as conn:
+        with self._pool.connect() as conn:
             cursor = conn.cursor()
             cursor.execute(
                 "UPDATE review_job SET status='done', updated_at=? WHERE id=?",
@@ -180,7 +191,7 @@ class DbQueue:
 
     def mark_failed(self, job_id: int, attempts: int, max_attempts: int, error: str) -> None:
         now = int(time.time())
-        with sqlite3.connect(self.db_file) as conn:
+        with self._pool.connect() as conn:
             cursor = conn.cursor()
             if attempts >= max_attempts:
                 cursor.execute(
@@ -209,7 +220,7 @@ class DbQueue:
             return False
         lease_seconds = _get_lease_seconds()
         now = int(time.time())
-        with sqlite3.connect(self.db_file) as conn:
+        with self._pool.connect() as conn:
             cursor = conn.cursor()
             if lease_seconds > 0:
                 cursor.execute(
@@ -240,7 +251,7 @@ class DbQueue:
             return 0
         now = int(time.time())
         stale_before = now - lease_seconds
-        with sqlite3.connect(self.db_file) as conn:
+        with self._pool.connect() as conn:
             cursor = conn.cursor()
             cursor.execute(
                 """
@@ -251,12 +262,13 @@ class DbQueue:
                 (now, stale_before),
             )
             conn.commit()
+            self._last_reclaim_ts = time.time()
             return int(cursor.rowcount or 0)
 
     def get_latest_job_for_record(self, record_id: int) -> Optional[Dict[str, Any]]:
         if not record_id:
             return None
-        with sqlite3.connect(self.db_file) as conn:
+        with self._pool.connect() as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             cursor.execute(
@@ -275,7 +287,7 @@ class DbQueue:
 
     def get_job_status_counts(self) -> Dict[str, int]:
         counts = {"pending": 0, "running": 0, "done": 0, "failed": 0}
-        with sqlite3.connect(self.db_file) as conn:
+        with self._pool.connect() as conn:
             cursor = conn.cursor()
             cursor.execute(
                 """
@@ -294,7 +306,7 @@ class DbQueue:
         return counts
 
     def get_latest_job_update(self) -> Optional[Dict[str, Any]]:
-        with sqlite3.connect(self.db_file) as conn:
+        with self._pool.connect() as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             cursor.execute(
@@ -310,7 +322,7 @@ class DbQueue:
             return dict(row) if row else None
 
     def get_latest_failed_job(self) -> Optional[Dict[str, Any]]:
-        with sqlite3.connect(self.db_file) as conn:
+        with self._pool.connect() as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             cursor.execute(
@@ -346,6 +358,13 @@ def _get_lease_seconds() -> int:
         return int(os.getenv("JOB_LEASE_SECONDS", "600"))
     except Exception:
         return 600
+
+
+def _get_reclaim_interval() -> float:
+    try:
+        return float(os.getenv("QUEUE_RECLAIM_INTERVAL", "60"))
+    except Exception:
+        return 60.0
 
 
 def _reclaim_stale_jobs_with_cursor(cursor: sqlite3.Cursor, now: int) -> None:

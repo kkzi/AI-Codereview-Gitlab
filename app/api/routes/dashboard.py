@@ -15,7 +15,7 @@ from app.core.config import load_config
 from app.core.llm_status import get_llm_status, set_llm_status
 from app.infra.db.sqlite import SQLiteRepository
 from app.infra.queue.db_queue import DbQueue
-from app.infra.llm.factory import get_client, get_model_name
+from app.infra.llm.factory import get_active_profile_info, get_client, get_model_name
 from app.usecases.dashboard import fetch_reviews, parse_query_args, serialize_records, format_delta, format_timestamp
 from app.usecases.retry import RetryUseCase
 
@@ -34,10 +34,12 @@ def root_redirect():
 @login_required
 def dashboard_page():
     config = load_config()
+    profile = get_active_profile_info() or {}
     return render_template(
         "dashboard.html",
         push_enabled=config.push_review_enabled,
         llm_model_name=get_model_name() or "unknown",
+        llm_profile_name=profile.get("name") or "",
     )
 
 
@@ -87,6 +89,7 @@ def api_llm_check():
         available = bool(client.ping())
     except Exception:
         available = False
+    profile = get_active_profile_info() or {}
 
     checked_at = int(datetime.datetime.now().timestamp())
     set_llm_status(available, checked_at)
@@ -95,6 +98,8 @@ def api_llm_check():
             "available": available,
             "checked_at": checked_at,
             "model_name": get_model_name() or "unknown",
+            "profile_name": profile.get("name"),
+            "profile_type": profile.get("type"),
         }
     )
 
@@ -103,11 +108,14 @@ def api_llm_check():
 @login_required
 def api_llm_status():
     status = get_llm_status()
+    profile = get_active_profile_info() or {}
     return jsonify(
         {
             "available": status.get("available"),
             "checked_at": status.get("checked_at"),
             "model_name": get_model_name() or "unknown",
+            "profile_name": profile.get("name"),
+            "profile_type": profile.get("type"),
         }
     )
 

@@ -11,62 +11,70 @@ class TestConfigValidator(unittest.TestCase):
         """测试前准备"""
         self.validator = ConfigValidator()
 
-    def test_validate_openai_config_success(self):
-        """测试 OpenAI 配置验证成功"""
-        with patch('app.core.config_validator.get_llm_value') as mock_get:
-            mock_get.side_effect = lambda key, default=None: {
-                "LLM_PROVIDER": "openai",
-                "OPENAI_API_KEY": "sk-test123",
-                "OPENAI_API_BASE_URL": "https://api.openai.com/v1",
-                "OPENAI_API_MODEL": "gpt-4"
-            }.get(key, default)
-
+    def test_validate_llm_profiles_missing_list(self):
+        """测试 LLM Profiles 缺失时报错"""
+        with patch('app.core.config_validator.get_llm_profiles', return_value=[]):
             self.validator._validate_llm_config()
+            self.assertEqual(len(self.validator.errors), 1)
+            self.assertEqual(self.validator.errors[0].field, "llm_profiles")
 
-            # 不应该有错误
+    def test_validate_llm_profiles_success(self):
+        """测试 LLM Profiles 配置验证成功"""
+        profiles = [
+            {
+                "name": "primary",
+                "type": "chat",
+                "base_url": "https://api.openai.com/v1",
+                "key": "sk-test",
+                "model": "gpt-4",
+            },
+            {
+                "name": "backup",
+                "type": "anthropic",
+                "base_url": "https://api.anthropic.com",
+                "key": "sk-test-2",
+                "model": "claude-3-opus",
+            },
+            {
+                "name": "responses",
+                "type": "responses",
+                "base_url": "https://api.openai.com/v1",
+                "key": "sk-test-3",
+                "model": "gpt-4.1",
+            },
+        ]
+        with patch('app.core.config_validator.get_llm_profiles', return_value=profiles):
+            self.validator._validate_llm_config()
             self.assertEqual(len(self.validator.errors), 0)
 
-    def test_validate_openai_config_missing_key(self):
-        """测试 OpenAI 配置缺少 API Key"""
-        with patch('app.core.config_validator.get_llm_value') as mock_get:
-            mock_get.side_effect = lambda key, default=None: {
-                "LLM_PROVIDER": "openai",
-                "OPENAI_API_BASE_URL": "https://api.openai.com/v1",
-                "OPENAI_API_MODEL": "gpt-4"
-            }.get(key, default)
-
+    def test_validate_llm_profiles_missing_key(self):
+        """测试 LLM Profiles 配置缺少 API Key"""
+        profiles = [
+            {
+                "name": "primary",
+                "type": "chat",
+                "base_url": "https://api.openai.com/v1",
+                "model": "gpt-4",
+            }
+        ]
+        with patch('app.core.config_validator.get_llm_profiles', return_value=profiles):
             self.validator._validate_llm_config()
-
-            # 应该有一个错误
-            self.assertEqual(len(self.validator.errors), 1)
-            self.assertEqual(self.validator.errors[0].field, "OPENAI_API_KEY")
-
-    def test_validate_openai_config_invalid_url(self):
-        """测试 OpenAI 配置无效的 URL"""
-        with patch('app.core.config_validator.get_llm_value') as mock_get:
-            mock_get.side_effect = lambda key, default=None: {
-                "LLM_PROVIDER": "openai",
-                "OPENAI_API_KEY": "sk-test123",
-                "OPENAI_API_BASE_URL": "not-a-valid-url",
-                "OPENAI_API_MODEL": "gpt-4"
-            }.get(key, default)
-
-            self.validator._validate_llm_config()
-
-            # 应该有一个错误
-            errors = [e for e in self.validator.errors if e.field == "OPENAI_API_BASE_URL"]
+            errors = [e for e in self.validator.errors if "key" in e.field]
             self.assertEqual(len(errors), 1)
 
-    def test_validate_unsupported_provider(self):
+    def test_validate_llm_profiles_unsupported_provider(self):
         """测试不支持的 LLM 提供商"""
-        with patch('app.core.config_validator.get_llm_value') as mock_get:
-            mock_get.side_effect = lambda key, default=None: {
-                "LLM_PROVIDER": "unsupported_provider"
-            }.get(key, default)
-
+        profiles = [
+            {
+                "name": "primary",
+                "type": "unsupported_provider",
+                "base_url": "https://example.com",
+                "key": "sk-test",
+                "model": "x",
+            }
+        ]
+        with patch('app.core.config_validator.get_llm_profiles', return_value=profiles):
             self.validator._validate_llm_config()
-
-            # 应该有一个错误
             self.assertEqual(len(self.validator.errors), 1)
             self.assertIn("不支持的 LLM 提供商", self.validator.errors[0].message)
 

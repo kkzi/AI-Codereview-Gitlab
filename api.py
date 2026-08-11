@@ -12,4 +12,4 @@ app = create_app()
 if __name__ == "__main__":
     config = load_config()
     check_config()
-    app.run(host="0.0.0.0", port=config.server_port)
+    app.run(host="0.0.0.0", port=config.server_port, threaded=True)
